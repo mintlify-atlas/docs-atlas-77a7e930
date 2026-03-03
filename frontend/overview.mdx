@@ -1,0 +1,188 @@
+---
+title: Frontend Architecture
+description: Overview of the Sunny Stack frontend architecture using TanStack Router, TanStack Query, and tRPC
+icon: layout-grid
+---
+
+## Architecture Overview
+
+The Sunny Stack frontend is built with modern React patterns and a type-safe architecture. The application is located in `apps/dashboard/src/` and uses a feature-based folder structure.
+
+## Tech Stack
+
+The frontend leverages these core technologies:
+
+<CardGroup cols={2}>
+  <Card title="TanStack Router" icon="route" href="/frontend/tanstack-router">
+    File-based routing with type-safe navigation and data loading
+  </Card>
+  <Card title="TanStack Query" icon="database" href="/frontend/tanstack-query">
+    Powerful data fetching and caching layer
+  </Card>
+  <Card title="tRPC Client" icon="plug" href="/frontend/trpc-client">
+    End-to-end type-safe API calls
+  </Card>
+  <Card title="Better Auth" icon="shield" href="/frontend/authentication">
+    Authentication and session management
+  </Card>
+</CardGroup>
+
+## Application Entry Point
+
+The application is bootstrapped in `src/main.tsx`:
+
+```tsx src/main.tsx
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createRouter, RouterProvider } from '@tanstack/react-router';
+import { StrictMode } from 'react';
+import ReactDOM from 'react-dom/client';
+
+import { queryClient } from '@/api/tanstack-query';
+import { trpcClient } from '@/api/trpc';
+import { routeTree } from './routeTree.gen';
+
+import './styles/index.css';
+
+// Create a new router instance
+const router = createRouter({
+  routeTree,
+  context: {
+    queryClient,
+    trpcClient,
+  },
+  defaultPreload: 'intent',
+  scrollRestoration: true,
+  defaultStructuralSharing: true,
+  defaultPreloadStaleTime: 0,
+});
+
+// Register the router instance for type safety
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
+  }
+}
+
+// Render the app
+const rootElement = document.getElementById('app');
+if (rootElement && !rootElement.innerHTML) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}
+```
+
+## Folder Structure
+
+The frontend follows a feature-based architecture:
+
+```
+src/
+├── api/                      # API client configuration
+│   ├── better-auth/          # Auth client setup
+│   ├── tanstack-query/       # Query client setup
+│   └── trpc/                 # tRPC client setup
+├── features/                 # Feature modules
+│   ├── auth/                 # Authentication feature
+│   │   ├── api/              # Auth queries
+│   │   ├── components/       # Auth UI components
+│   │   └── hooks/            # Auth hooks
+│   └── books/                # Books feature
+│       ├── api/              # Books queries
+│       ├── components/       # Books UI components
+│       └── types/            # Books types
+├── routes/                   # File-based routes
+│   ├── __root.tsx            # Root layout
+│   ├── _auth/                # Auth layout group
+│   └── _protected/           # Protected layout group
+└── main.tsx                  # Application entry
+```
+
+<Note>
+  Features are self-contained modules that include their own API queries, components, hooks, and types.
+</Note>
+
+## Key Architectural Patterns
+
+### 1. Router Context
+
+The router context provides shared dependencies to all routes:
+
+```tsx src/routes/__root.tsx
+export interface AppRouterContext {
+  queryClient: QueryClient;
+  trpcClient: typeof trpcClient;
+}
+
+export const Route = createRootRouteWithContext<AppRouterContext>()({
+  component: () => (
+    <>
+      <Outlet />
+      <Toaster position="top-center" richColors />
+      {/* Dev tools */}
+    </>
+  ),
+});
+```
+
+### 2. Feature-Based Organization
+
+Each feature module contains:
+- **API queries** - TanStack Query definitions
+- **Components** - React UI components
+- **Hooks** - Custom React hooks
+- **Types** - TypeScript type definitions
+
+### 3. Query-First Data Loading
+
+Data is loaded at the route level using TanStack Query:
+
+```tsx src/routes/_protected/books.tsx
+export const Route = createFileRoute('/_protected/books')({
+  component: RouteComponent,
+  beforeLoad: async ({ context: { queryClient } }) => {
+    await queryClient.ensureQueryData(booksQueryOptions());
+  },
+});
+```
+
+### 4. Layout Routes for Auth
+
+Layout routes handle authentication and authorization:
+- `_auth/` - Public routes (redirects if authenticated)
+- `_protected/` - Protected routes (redirects if not authenticated)
+
+## Development Tools
+
+The application includes integrated dev tools:
+
+<CardGroup cols={2}>
+  <Card title="TanStack Router Devtools" icon="route">
+    Inspect routes, params, and navigation state
+  </Card>
+  <Card title="TanStack Query Devtools" icon="database">
+    Debug queries, mutations, and cache
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Routing" icon="route" href="/frontend/tanstack-router">
+    Learn about file-based routing and navigation
+  </Card>
+  <Card title="Data Fetching" icon="database" href="/frontend/tanstack-query">
+    Understand query setup and patterns
+  </Card>
+  <Card title="API Integration" icon="plug" href="/frontend/trpc-client">
+    Set up tRPC client for type-safe APIs
+  </Card>
+  <Card title="Authentication" icon="shield" href="/frontend/authentication">
+    Implement auth flows
+  </Card>
+</CardGroup>

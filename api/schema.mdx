@@ -1,0 +1,314 @@
+---
+title: Database Schema
+description: Define type-safe database tables with Drizzle ORM
+---
+
+## Overview
+
+Sunny Stack uses [Drizzle ORM](https://orm.drizzle.team/) for type-safe database schemas. All schemas are defined in `apps/api/src/core/database/schema/`.
+
+**Source**: `apps/api/src/core/database/schema/`
+
+## Schema Structure
+
+```
+apps/api/src/core/database/schema/
+├── index.ts           # Export all schemas
+├── book.ts            # Example: Book table
+└── better-auth.ts     # Better Auth tables
+```
+
+### Index File
+
+```typescript apps/api/src/core/database/schema/index.ts
+export * from './better-auth';
+export * from './book';
+```
+
+All schemas must be exported from `index.ts` to be included in the database type.
+
+## Database Type
+
+```typescript apps/api/src/core/database/database.constants.ts
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from './schema';
+
+export const DB_CONNECTION = Symbol('DB_CONNECTION');
+export type Database = NodePgDatabase<typeof schema>;
+```
+
+The `Database` type includes all exported schemas and provides full type inference.
+
+## Creating a Table
+
+Example book table schema:
+
+```typescript apps/api/src/core/database/schema/book.ts
+import { pgTable, text, unique } from 'drizzle-orm/pg-core';
+import { createdAt, randomPrimaryUUID } from '../utils';
+
+export const bookTable = pgTable(
+  'book',
+  {
+    id: randomPrimaryUUID(),
+    title: text().notNull(),
+    publishedAt: createdAt(),
+  },
+  (t) => [unique().on(t.title)],
+);
+```
+
+### Table Definition
+
+<ParamField path="tableName" type="string" required>
+  Database table name (snake_case by convention)
+</ParamField>
+
+<ParamField path="columns" type="object" required>
+  Column definitions using Drizzle column types
+</ParamField>
+
+<ParamField path="constraints" type="function">
+  Table-level constraints (unique, indexes, foreign keys)
+</ParamField>
+
+## Column Helpers
+
+Sunny Stack provides reusable column helpers:
+
+```typescript apps/api/src/core/database/utils.ts
+import { timestamp, uuid } from 'drizzle-orm/pg-core';
+
+export const randomPrimaryUUID = () => 
+  uuid().primaryKey().defaultRandom();
+
+export const createdAt = () => 
+  timestamp({ withTimezone: true }).notNull().defaultNow();
+
+export const updatedAt = () =>
+  timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date());
+```
+
+### randomPrimaryUUID()
+
+Creates a UUID primary key with automatic random generation:
+
+```typescript
+export const userTable = pgTable('user', {
+  id: randomPrimaryUUID(),
+  // ...
+});
+```
+
+<ResponseField name="type" type="uuid">
+  PostgreSQL UUID type
+</ResponseField>
+
+<ResponseField name="primaryKey" type="boolean">
+  Set as primary key
+</ResponseField>
+
+<ResponseField name="default" type="function">
+  Automatically generates random UUID using `gen_random_uuid()`
+</ResponseField>
+
+### createdAt()
+
+Creates a timestamp column for record creation:
+
+```typescript
+export const postTable = pgTable('post', {
+  id: randomPrimaryUUID(),
+  createdAt: createdAt(),
+  // ...
+});
+```
+
+<ResponseField name="type" type="timestamp">
+  PostgreSQL timestamp with timezone
+</ResponseField>
+
+<ResponseField name="notNull" type="boolean">
+  Required field
+</ResponseField>
+
+<ResponseField name="default" type="function">
+  Set to current timestamp on insert
+</ResponseField>
+
+### updatedAt()
+
+Creates a timestamp column that updates automatically:
+
+```typescript
+export const commentTable = pgTable('comment', {
+  id: randomPrimaryUUID(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+  // ...
+});
+```
+
+<ResponseField name="type" type="timestamp">
+  PostgreSQL timestamp with timezone
+</ResponseField>
+
+<ResponseField name="notNull" type="boolean">
+  Required field
+</ResponseField>
+
+<ResponseField name="default" type="function">
+  Set to current timestamp on insert
+</ResponseField>
+
+<ResponseField name="$onUpdate" type="function">
+  Automatically updates to current timestamp on every update
+</ResponseField>
+
+## Common Column Types
+
+Drizzle provides PostgreSQL column types:
+
+### Text Columns
+
+```typescript
+import { text, varchar } from 'drizzle-orm/pg-core';
+
+{
+  title: text().notNull(),
+  email: varchar({ length: 255 }).notNull(),
+  bio: text(), // nullable
+}
+```
+
+### Numeric Columns
+
+```typescript
+import { integer, real, numeric } from 'drizzle-orm/pg-core';
+
+{
+  count: integer().notNull().default(0),
+  price: numeric({ precision: 10, scale: 2 }),
+  rating: real(),
+}
+```
+
+### Boolean Columns
+
+```typescript
+import { boolean } from 'drizzle-orm/pg-core';
+
+{
+  isPublished: boolean().notNull().default(false),
+}
+```
+
+### Date/Time Columns
+
+```typescript
+import { timestamp, date, time } from 'drizzle-orm/pg-core';
+
+{
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  birthDate: date(),
+  startTime: time(),
+}
+```
+
+### JSON Columns
+
+```typescript
+import { json, jsonb } from 'drizzle-orm/pg-core';
+
+{
+  metadata: jsonb().$type<{ key: string; value: string }[]>(),
+}
+```
+
+## Constraints
+
+### Unique Constraint
+
+```typescript apps/api/src/core/database/schema/book.ts
+import { pgTable, text, unique } from 'drizzle-orm/pg-core';
+
+export const bookTable = pgTable(
+  'book',
+  {
+    id: randomPrimaryUUID(),
+    title: text().notNull(),
+  },
+  (t) => [unique().on(t.title)],
+);
+```
+
+Composite unique constraint:
+
+```typescript
+(t) => [
+  unique().on(t.userId, t.projectId),
+]
+```
+
+### Indexes
+
+```typescript
+import { index } from 'drizzle-orm/pg-core';
+
+(t) => [
+  index('idx_user_email').on(t.email),
+]
+```
+
+### Foreign Keys
+
+```typescript
+import { foreignKey } from 'drizzle-orm/pg-core';
+
+export const postTable = pgTable(
+  'post',
+  {
+    id: randomPrimaryUUID(),
+    authorId: uuid().notNull(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.authorId],
+      foreignColumns: [userTable.id],
+    }),
+  ],
+);
+```
+
+## Type Inference
+
+Drizzle automatically infers TypeScript types:
+
+```typescript
+import { bookTable } from '@/core/database';
+
+// Infer the type of a book row
+type Book = typeof bookTable.$inferSelect;
+// { id: string; title: string; publishedAt: Date }
+
+// Infer the insert type (may differ from select)
+type NewBook = typeof bookTable.$inferInsert;
+// { id?: string; title: string; publishedAt?: Date }
+```
+
+## Migrations
+
+After creating or modifying schemas:
+
+```bash
+# Generate migration
+pnpm db:generate
+
+# Apply migration
+pnpm db:migrate
+```
+
+See the [Database Migrations guide](/guides/database-migrations) for more on migrations.

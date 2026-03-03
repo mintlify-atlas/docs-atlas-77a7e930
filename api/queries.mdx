@@ -1,0 +1,405 @@
+---
+title: Query Patterns
+description: Common Drizzle ORM query patterns for tRPC procedures
+---
+
+## Overview
+
+This guide covers common Drizzle query patterns used in tRPC procedures. All queries use the `ctx.db` instance.
+
+**Source**: `apps/api/src/modules/books/trpc/books.router.ts`
+
+## Select Queries
+
+### Select All
+
+```typescript apps/api/src/modules/books/trpc/books.router.ts
+listPublic: publicProcedure.query(async ({ ctx }) => {
+  return ctx.db.select().from(bookTable);
+}),
+```
+
+Returns all rows from the table:
+
+```typescript
+[
+  { id: '...', title: 'Book 1', publishedAt: Date },
+  { id: '...', title: 'Book 2', publishedAt: Date },
+]
+```
+
+### Select Specific Columns
+
+```typescript
+list: publicProcedure.query(async ({ ctx }) => {
+  return ctx.db
+    .select({
+      id: bookTable.id,
+      title: bookTable.title,
+    })
+    .from(bookTable);
+}),
+```
+
+Returns only specified columns:
+
+```typescript
+[
+  { id: '...', title: 'Book 1' },
+  { id: '...', title: 'Book 2' },
+]
+```
+
+### Where Clauses
+
+```typescript
+import { eq } from 'drizzle-orm';
+
+getById: publicProcedure
+  .input(z.object({ id: z.string().uuid() }))
+  .query(async ({ ctx, input }) => {
+    const [book] = await ctx.db
+      .select()
+      .from(bookTable)
+      .where(eq(bookTable.id, input.id));
+    
+    return book ?? null;
+  }),
+```
+
+### Common Operators
+
+```typescript
+import { eq, ne, gt, gte, lt, lte, like, and, or } from 'drizzle-orm';
+
+// Equals
+.where(eq(bookTable.id, '123'))
+
+// Not equals
+.where(ne(bookTable.status, 'deleted'))
+
+// Greater than
+.where(gt(bookTable.publishedAt, new Date('2020-01-01')))
+
+// LIKE pattern
+.where(like(bookTable.title, '%TypeScript%'))
+
+// Multiple conditions (AND)
+.where(and(
+  eq(bookTable.authorId, userId),
+  eq(bookTable.isPublished, true)
+))
+
+// Multiple conditions (OR)
+.where(or(
+  eq(bookTable.status, 'draft'),
+  eq(bookTable.status, 'pending')
+))
+```
+
+## Insert Queries
+
+### Insert Single Row
+
+```typescript apps/api/src/modules/books/trpc/books.router.ts
+create: protectedProcedure
+  .input(z.object({ title: z.string().min(1), publishedAt: z.coerce.date() }))
+  .mutation(async ({ ctx, input }) => {
+    const [newBook] = await ctx.db
+      .insert(bookTable)
+      .values({ title: input.title, publishedAt: input.publishedAt })
+      .returning();
+
+    return newBook;
+  }),
+```
+
+<ParamField path=".values()" type="object | object[]" required>
+  Single object or array of objects to insert
+</ParamField>
+
+<ParamField path=".returning()" type="function">
+  Returns the inserted row(s). Without this, insert returns `void`.
+</ParamField>
+
+### Insert Multiple Rows
+
+```typescript
+createMany: protectedProcedure
+  .input(z.array(z.object({ title: z.string() })))
+  .mutation(async ({ ctx, input }) => {
+    const books = await ctx.db
+      .insert(bookTable)
+      .values(input)
+      .returning();
+
+    return books;
+  }),
+```
+
+### Insert with Defaults
+
+```typescript
+// Columns with .defaultNow() or .default() are optional
+const [book] = await ctx.db
+  .insert(bookTable)
+  .values({
+    title: 'New Book',
+    // id, publishedAt automatically set by defaults
+  })
+  .returning();
+```
+
+## Update Queries
+
+### Update with Where
+
+```typescript
+update: protectedProcedure
+  .input(z.object({ 
+    id: z.string().uuid(), 
+    title: z.string() 
+  }))
+  .mutation(async ({ ctx, input }) => {
+    const [updated] = await ctx.db
+      .update(bookTable)
+      .set({ title: input.title })
+      .where(eq(bookTable.id, input.id))
+      .returning();
+
+    return updated;
+  }),
+```
+
+<ParamField path=".set()" type="object" required>
+  Fields to update with their new values
+</ParamField>
+
+<ParamField path=".where()" type="SQL" required>
+  Condition for which rows to update. Always include this to avoid updating all rows.
+</ParamField>
+
+<ParamField path=".returning()" type="function">
+  Returns the updated row(s)
+</ParamField>
+
+### Partial Updates
+
+```typescript
+// Only update provided fields
+const [book] = await ctx.db
+  .update(bookTable)
+  .set({ 
+    ...(input.title && { title: input.title }),
+    ...(input.publishedAt && { publishedAt: input.publishedAt }),
+  })
+  .where(eq(bookTable.id, input.id))
+  .returning();
+```
+
+## Delete Queries
+
+### Delete with Where
+
+```typescript
+delete: protectedProcedure
+  .input(z.object({ id: z.string().uuid() }))
+  .mutation(async ({ ctx, input }) => {
+    await ctx.db
+      .delete(bookTable)
+      .where(eq(bookTable.id, input.id));
+
+    return { success: true };
+  }),
+```
+
+<ParamField path=".where()" type="SQL" required>
+  Condition for which rows to delete. Always include this to avoid deleting all rows.
+</ParamField>
+
+### Delete and Return
+
+```typescript
+const [deleted] = await ctx.db
+  .delete(bookTable)
+  .where(eq(bookTable.id, input.id))
+  .returning();
+
+return deleted;
+```
+
+## Joins
+
+### Inner Join
+
+```typescript
+import { eq } from 'drizzle-orm';
+
+getBookWithAuthor: publicProcedure
+  .input(z.object({ id: z.string().uuid() }))
+  .query(async ({ ctx, input }) => {
+    const [result] = await ctx.db
+      .select({
+        book: bookTable,
+        author: userTable,
+      })
+      .from(bookTable)
+      .innerJoin(userTable, eq(bookTable.authorId, userTable.id))
+      .where(eq(bookTable.id, input.id));
+
+    return result;
+  }),
+```
+
+Returns:
+
+```typescript
+{
+  book: { id: '...', title: '...', authorId: '...' },
+  author: { id: '...', name: '...', email: '...' }
+}
+```
+
+### Left Join
+
+```typescript
+const books = await ctx.db
+  .select({
+    book: bookTable,
+    author: userTable,
+  })
+  .from(bookTable)
+  .leftJoin(userTable, eq(bookTable.authorId, userTable.id));
+
+// author may be null if no matching user
+```
+
+## Ordering and Pagination
+
+### Order By
+
+```typescript
+import { desc, asc } from 'drizzle-orm';
+
+list: publicProcedure.query(async ({ ctx }) => {
+  return ctx.db
+    .select()
+    .from(bookTable)
+    .orderBy(desc(bookTable.publishedAt));
+}),
+```
+
+### Limit and Offset
+
+```typescript
+listPaginated: publicProcedure
+  .input(z.object({ page: z.number().min(1), pageSize: z.number().min(1).max(100) }))
+  .query(async ({ ctx, input }) => {
+    const books = await ctx.db
+      .select()
+      .from(bookTable)
+      .limit(input.pageSize)
+      .offset((input.page - 1) * input.pageSize)
+      .orderBy(desc(bookTable.publishedAt));
+
+    return books;
+  }),
+```
+
+## Aggregations
+
+### Count
+
+```typescript
+import { count } from 'drizzle-orm';
+
+getCount: publicProcedure.query(async ({ ctx }) => {
+  const [result] = await ctx.db
+    .select({ count: count() })
+    .from(bookTable);
+
+  return result.count;
+}),
+```
+
+### Group By
+
+```typescript
+import { count } from 'drizzle-orm';
+
+getBooksByAuthor: publicProcedure.query(async ({ ctx }) => {
+  return ctx.db
+    .select({
+      authorId: bookTable.authorId,
+      count: count(),
+    })
+    .from(bookTable)
+    .groupBy(bookTable.authorId);
+}),
+```
+
+## Transactions
+
+### Multiple Operations
+
+```typescript
+createBookAndNotify: protectedProcedure
+  .input(z.object({ title: z.string() }))
+  .mutation(async ({ ctx, input }) => {
+    return ctx.db.transaction(async (tx) => {
+      // Insert book
+      const [book] = await tx
+        .insert(bookTable)
+        .values({ title: input.title })
+        .returning();
+
+      // Create notification
+      await tx
+        .insert(notificationTable)
+        .values({
+          userId: ctx.user.id,
+          message: `Created book: ${book.title}`,
+        });
+
+      return book;
+    });
+  }),
+```
+
+<ParamField path="tx" type="Database">
+  Transaction instance with same API as `ctx.db`. All operations are rolled back if any fail.
+</ParamField>
+
+## Error Handling
+
+Handle database errors gracefully:
+
+```typescript apps/api/src/modules/books/trpc/books.router.ts
+import { isDbError } from '@/core/database';
+import { throwAppError } from '@/trpc/error';
+
+create: protectedProcedure
+  .input(z.object({ title: z.string().min(1), publishedAt: z.coerce.date() }))
+  .mutation(async ({ ctx, input }) => {
+    try {
+      const [newBook] = await ctx.db
+        .insert(bookTable)
+        .values({ title: input.title, publishedAt: input.publishedAt })
+        .returning();
+
+      return newBook;
+    } catch (error) {
+      if (isDbError(error, 'UNIQUE_CONSTRAINT')) {
+        throwAppError({
+          trpcCode: 'BAD_REQUEST',
+          appCode: 'BOOK_TITLE_TAKEN',
+          message: 'Book title already taken',
+          field: 'title',
+        });
+      }
+      throw error;
+    }
+  }),
+```
+
+See [Error Handling](/api/error-handling) for more details.

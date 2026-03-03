@@ -1,0 +1,190 @@
+---
+title: Procedures
+description: Public and protected tRPC procedures with authentication
+---
+
+## Overview
+
+Sunny Stack provides two procedure types:
+
+- **publicProcedure** - Anyone can call (no authentication required)
+- **protectedProcedure** - Only authenticated users can call
+
+**Source**: `apps/api/src/trpc/trpc.ts`
+
+## Public Procedure
+
+Use `publicProcedure` for endpoints accessible to everyone:
+
+```typescript apps/api/src/trpc/trpc.ts
+export const publicProcedure = t.procedure;
+```
+
+### Example: Public Query
+
+```typescript apps/api/src/modules/books/trpc/books.router.ts
+import { publicProcedure, router } from '@/trpc/trpc';
+import { bookTable } from '@/core/database';
+
+export const booksRouter = router({
+  listPublic: publicProcedure.query(async ({ ctx }) => {
+    return ctx.db.select().from(bookTable);
+  }),
+});
+```
+
+### Context in Public Procedures
+
+<ParamField path="ctx.db" type="Database" required>
+  Drizzle database instance
+</ParamField>
+
+<ParamField path="ctx.user" type="User | null">
+  User object if authenticated, `null` otherwise
+</ParamField>
+
+<ParamField path="ctx.session" type="Session | null">
+  Session object if authenticated, `null` otherwise
+</ParamField>
+
+## Protected Procedure
+
+Use `protectedProcedure` for endpoints requiring authentication:
+
+```typescript apps/api/src/trpc/trpc.ts
+const requireUser = t.middleware(({ ctx, next }) => {
+  if (!ctx.user || !ctx.session) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Login required' });
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+      session: ctx.session,
+    },
+  });
+});
+
+export const protectedProcedure = t.procedure.use(requireUser);
+```
+
+### How It Works
+
+1. The `requireUser` middleware checks for `ctx.user` and `ctx.session`
+2. Throws `UNAUTHORIZED` error if either is missing
+3. Narrows the type so `user` and `session` are non-nullable in the procedure
+
+### Example: Protected Query
+
+```typescript apps/api/src/modules/books/trpc/books.router.ts
+import { protectedProcedure, router } from '@/trpc/trpc';
+import { bookTable } from '@/core/database';
+
+export const booksRouter = router({
+  listProtected: protectedProcedure.query(async ({ ctx }) => {
+    // ctx.user and ctx.session are guaranteed to be non-null
+    return ctx.db.select().from(bookTable);
+  }),
+});
+```
+
+### Context in Protected Procedures
+
+<ParamField path="ctx.db" type="Database" required>
+  Drizzle database instance
+</ParamField>
+
+<ParamField path="ctx.user" type="User" required>
+  Authenticated user object (guaranteed non-null)
+</ParamField>
+
+<ParamField path="ctx.session" type="Session" required>
+  Authenticated session object (guaranteed non-null)
+</ParamField>
+
+## Input Validation
+
+Use Zod schemas to validate procedure inputs:
+
+```typescript apps/api/src/modules/books/trpc/books.router.ts
+import { z } from 'zod';
+import { protectedProcedure, router } from '@/trpc/trpc';
+import { bookTable } from '@/core/database';
+
+export const booksRouter = router({
+  create: protectedProcedure
+    .input(z.object({ 
+      title: z.string().min(1), 
+      publishedAt: z.coerce.date() 
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [newBook] = await ctx.db
+        .insert(bookTable)
+        .values({ 
+          title: input.title, 
+          publishedAt: input.publishedAt 
+        })
+        .returning();
+
+      return newBook;
+    }),
+});
+```
+
+<ParamField path="input" type="z.infer<typeof schema>">
+  Validated input based on your Zod schema. Type-safe on both client and server.
+</ParamField>
+
+## Query vs Mutation
+
+### Query
+
+Use `.query()` for read operations:
+
+```typescript
+list: publicProcedure.query(async ({ ctx }) => {
+  return ctx.db.select().from(bookTable);
+})
+```
+
+- For fetching data
+- Can be cached
+- Called with `trpc.books.list.useQuery()`
+
+### Mutation
+
+Use `.mutation()` for write operations:
+
+```typescript
+create: protectedProcedure
+  .input(z.object({ title: z.string() }))
+  .mutation(async ({ ctx, input }) => {
+    const [book] = await ctx.db
+      .insert(bookTable)
+      .values(input)
+      .returning();
+    return book;
+  })
+```
+
+- For creating, updating, deleting data
+- Not cached
+- Called with `trpc.books.create.useMutation()`
+
+## Type Safety
+
+All procedures are fully type-safe:
+
+```typescript
+// Client-side
+const { data } = trpc.books.create.useMutation();
+//      ^? { id: string; title: string; publishedAt: Date }
+
+const result = await trpc.books.create.mutate({
+  title: 'TypeScript Handbook',
+  publishedAt: new Date('2023-01-01'),
+});
+//    ^? { id: string; title: string; publishedAt: Date }
+```
+
+The return type of your procedure becomes the type on the client automatically.

@@ -1,0 +1,302 @@
+---
+title: Project Structure
+description: Understanding the Sunny Stack monorepo architecture
+---
+
+Sunny Stack is organized as a pnpm monorepo, keeping your backend, frontend, and shared code in a single repository with strong type safety across all packages.
+
+## Monorepo Overview
+
+The repository follows a standard monorepo structure using pnpm workspaces:
+
+```
+sunny/
+├── apps/                 # Application packages
+│   ├── api/             # NestJS backend application
+│   └── dashboard/       # React frontend application
+├── packages/            # Shared packages
+│   ├── config/         # Shared TypeScript configurations
+│   └── ui/             # Shared UI components (Shadcn)
+├── docker-compose.yml   # PostgreSQL database setup
+├── pnpm-workspace.yaml  # pnpm workspace configuration
+└── package.json         # Root package with shared scripts
+```
+
+## Apps Directory
+
+The `apps/` directory contains your deployable applications:
+
+### apps/api - Backend Application
+
+A NestJS application with tRPC integration for type-safe API endpoints.
+
+```
+apps/api/
+├── src/
+│   ├── core/              # Core functionality
+│   │   ├── auth/          # Better Auth configuration
+│   │   └── database/      # Drizzle ORM setup and schemas
+│   ├── modules/           # Feature modules
+│   │   └── books/         # Example books module
+│   │       └── trpc/      # tRPC routers for books
+│   ├── trpc/              # tRPC setup and app router
+│   ├── common/            # Shared utilities and decorators
+│   ├── config/            # Environment configuration
+│   ├── app.module.ts      # Root NestJS module
+│   └── main.ts            # Application entry point
+├── test/                  # E2E tests
+├── drizzle.config.ts      # Drizzle ORM configuration
+└── package.json           # API dependencies and scripts
+```
+
+**Key Technologies:**
+- **NestJS**: Opinionated framework for building scalable server-side applications
+- **tRPC**: End-to-end type-safe APIs without code generation
+- **Drizzle ORM**: Lightweight, type-safe SQL ORM
+- **Better Auth**: Full-featured authentication library
+- **PostgreSQL**: Primary database (via Docker)
+
+**Available Scripts:**
+```bash
+pnpm dev           # Start in watch mode
+pnpm build         # Build for production
+pnpm typecheck     # Type check without emitting
+pnpm db:push       # Push schema to database
+pnpm db:studio     # Open Drizzle Studio
+pnpm db:generate   # Generate migrations
+pnpm db:migrate    # Run migrations
+```
+
+### apps/dashboard - Frontend Application
+
+A React application built with Vite, using Tanstack Router and Query for routing and data fetching.
+
+```
+apps/dashboard/
+├── public/              # Static assets
+├── src/
+│   ├── api/            # tRPC client configuration
+│   ├── features/       # Feature-based components
+│   ├── routes/         # File-based routing (Tanstack Router)
+│   ├── styles/         # Global styles and Tailwind CSS
+│   ├── main.tsx        # Application entry point
+│   └── routeTree.gen.ts # Generated route tree
+└── package.json        # Dashboard dependencies and scripts
+```
+
+**Key Technologies:**
+- **React 19**: Latest React with modern features
+- **Vite**: Fast build tool and dev server
+- **Tanstack Router**: Type-safe file-based routing
+- **Tanstack Query**: Powerful async state management
+- **tRPC Client**: Type-safe API client matching the backend
+- **Tailwind CSS 4**: Utility-first CSS framework
+
+**Available Scripts:**
+```bash
+pnpm dev           # Start dev server on port 3000
+pnpm build         # Build for production
+pnpm preview       # Preview production build
+pnpm typecheck     # Type check without emitting
+```
+
+## Packages Directory
+
+Shared packages that can be imported by any application:
+
+### packages/config - TypeScript Configurations
+
+Centralized TypeScript configuration files for consistency across the monorepo.
+
+```
+packages/config/
+├── tsconfig/
+│   ├── base.json          # Base TypeScript config
+│   ├── node.json          # Node.js specific config
+│   ├── nestjs.json        # NestJS specific config
+│   ├── vite-react.json    # Vite + React config
+│   ├── node-lib.json      # Node library config
+│   └── react-lib.json     # React library config
+└── package.json
+```
+
+Applications extend these configs to ensure consistent TypeScript settings:
+
+```json apps/api/tsconfig.json
+{
+  "extends": "@repo/config/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "outDir": "./dist"
+  }
+}
+```
+
+### packages/ui - Shared UI Components
+
+Reusable React components built on Shadcn, shared across frontend applications.
+
+```
+packages/ui/
+├── src/
+│   ├── components/      # Shadcn components (Button, Input, etc.)
+│   ├── hooks/          # Shared React hooks
+│   ├── lib/            # Utility functions (cn, etc.)
+│   ├── styles/         # Global CSS and Tailwind config
+│   └── index.ts        # Package exports
+├── components.json     # Shadcn configuration
+└── package.json
+```
+
+**Usage Example:**
+```typescript
+import { Button } from '@repo/ui/components/button';
+import '@repo/ui/styles/global.css';
+
+function MyComponent() {
+  return <Button variant="primary">Click me</Button>;
+}
+```
+
+**Key Features:**
+- Shadcn UI components with full source code
+- Tailwind CSS for styling
+- Base UI React for headless primitives
+- Customizable and themeable components
+
+## Root Configuration Files
+
+### pnpm-workspace.yaml
+
+Defines which directories contain workspace packages:
+
+```yaml
+packages:
+  - "apps/*"
+  - "packages/*"
+```
+
+### package.json (Root)
+
+Provides monorepo-wide scripts that run across all packages:
+
+```json
+{
+  "scripts": {
+    "build": "pnpm --recursive run build",
+    "dev": "pnpm --recursive --parallel run dev",
+    "typecheck": "pnpm --recursive run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json,js,jsx}\"",
+    "fin": "pnpm format && pnpm lint:fix && pnpm typecheck",
+    "db:push": "pnpm --filter @repo/api run db:push"
+  },
+  "packageManager": "pnpm@10.27.0"
+}
+```
+
+### docker-compose.yml
+
+PostgreSQL database setup for local development:
+
+```yaml
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: sunny-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_USER=user
+      - POSTGRES_DB=postgres
+```
+
+## Package Dependencies
+
+Workspace packages can depend on each other using the `workspace:*` protocol:
+
+```json apps/api/package.json
+{
+  "dependencies": {
+    "@repo/config": "workspace:*"
+  }
+}
+```
+
+```json apps/dashboard/package.json
+{
+  "dependencies": {
+    "@repo/config": "workspace:*",
+    "@repo/ui": "workspace:*"
+  }
+}
+```
+
+This ensures packages always use the local versions and provides type safety across the monorepo.
+
+## Workspace Scripts
+
+You can run scripts in specific packages using pnpm filters:
+
+```bash
+# Run dev in a specific package
+pnpm --filter @repo/api dev
+pnpm --filter @repo/dashboard dev
+
+# Run a script in all packages
+pnpm --recursive run build
+
+# Run in all packages in parallel
+pnpm --recursive --parallel run dev
+
+# Run in packages matching a pattern
+pnpm --filter "./apps/*" run typecheck
+```
+
+## Adding New Packages
+
+To add a new package to the monorepo:
+
+1. Create a new directory under `apps/` or `packages/`
+2. Add a `package.json` with a unique name (e.g., `@repo/new-package`)
+3. The package will automatically be included in the workspace
+4. Reference it in other packages using `"@repo/new-package": "workspace:*"`
+
+## Type Safety Across the Monorepo
+
+One of the biggest advantages of Sunny Stack's monorepo structure is end-to-end type safety:
+
+1. **API defines types**: Backend defines data structures and procedures in tRPC routers
+2. **Types flow to frontend**: Dashboard imports tRPC client with full type inference
+3. **Shared packages**: UI and config packages maintain consistent types
+4. **TypeScript validates everything**: One `pnpm typecheck` validates the entire stack
+
+```typescript
+// apps/api/src/modules/books/trpc/books.router.ts
+export const booksRouter = router({
+  create: protectedProcedure
+    .input(z.object({ 
+      title: z.string().min(1), 
+      publishedAt: z.coerce.date() 
+    }))
+    .mutation(async ({ ctx, input }) => { /* ... */ }),
+});
+
+// apps/dashboard - Full type safety, no code generation!
+import { trpc } from '@/api/trpc';
+
+const { mutate } = trpc.books.create.useMutation();
+mutate({
+  title: "The Great Gatsby",  // ✅ Type-safe
+  publishedAt: new Date(),     // ✅ Type-safe
+  // invalidField: 123         // ❌ TypeScript error
+});
+```
+
+## Next Steps
+
+- Explore [API Development](/api/trpc-setup)
+- Learn about [Authentication](/backend/authentication)
+- Build [UI Components](/frontend/ui-components)
+- Deploy your [Application](/guides/deployment)

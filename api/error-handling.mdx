@@ -1,0 +1,250 @@
+---
+title: Error Handling
+description: Throw and handle application errors with type safety
+---
+
+## Overview
+
+Sunny Stack provides a custom error system for type-safe, user-friendly error handling:
+
+- **Zod errors** - Automatic input validation errors
+- **AppError** - Semantic application errors with custom codes
+- **TRPCError** - Standard tRPC errors
+
+**Source**: `apps/api/src/trpc/error.ts`
+
+## AppError Class
+
+```typescript apps/api/src/trpc/error.ts
+export type AppErrorCode = 
+  | 'BOOK_TITLE_TAKEN' 
+  | 'ORG_REQUIRED' 
+  | 'PAYWALLED' 
+  | 'RATE_LIMITED';
+
+export class AppError extends Error {
+  constructor(
+    public readonly appCode: AppErrorCode,
+    message?: string,
+    public readonly field?: string,
+  ) {
+    super(message ?? appCode);
+    this.name = 'AppError';
+  }
+}
+```
+
+### Parameters
+
+<ParamField path="appCode" type="AppErrorCode" required>
+  Application-specific error code. Add your own codes to the union type.
+</ParamField>
+
+<ParamField path="message" type="string">
+  Human-readable error message shown to users. Defaults to the `appCode` if not provided.
+</ParamField>
+
+<ParamField path="field" type="string">
+  The form field that caused the error (useful for field-specific validation).
+</ParamField>
+
+## Throwing Errors
+
+Use the `throwAppError` helper to throw errors from procedures:
+
+```typescript apps/api/src/trpc/error.ts
+export function throwAppError(opts: {
+  trpcCode: TRPCError['code'];
+  appCode: AppErrorCode;
+  message: string;
+  field?: string;
+}): never {
+  throw new TRPCError({
+    code: opts.trpcCode,
+    message: opts.message, // must be safe for end users
+    cause: new AppError(opts.appCode, opts.message, opts.field),
+  });
+}
+```
+
+### Parameters
+
+<ParamField path="trpcCode" type="TRPCError['code']" required>
+  Standard tRPC error code:
+  
+  - `BAD_REQUEST` - 400
+  - `UNAUTHORIZED` - 401
+  - `FORBIDDEN` - 403
+  - `NOT_FOUND` - 404
+  - `CONFLICT` - 409
+  - `INTERNAL_SERVER_ERROR` - 500
+</ParamField>
+
+<ParamField path="appCode" type="AppErrorCode" required>
+  Your application-specific error code for type-safe client handling.
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  Error message shown to users. Must be safe and user-friendly.
+</ParamField>
+
+<ParamField path="field" type="string">
+  Optional field name for form validation errors.
+</ParamField>
+
+## Real-World Example
+
+Handling unique constraint violations:
+
+```typescript apps/api/src/modules/books/trpc/books.router.ts
+import { isDbError } from '@/core/database';
+import { throwAppError } from '@/trpc/error';
+import { protectedProcedure, router } from '@/trpc/trpc';
+
+export const booksRouter = router({
+  create: protectedProcedure
+    .input(z.object({ title: z.string().min(1), publishedAt: z.coerce.date() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const [newBook] = await ctx.db
+          .insert(bookTable)
+          .values({ title: input.title, publishedAt: input.publishedAt })
+          .returning();
+
+        return newBook;
+      } catch (error) {
+        if (isDbError(error, 'UNIQUE_CONSTRAINT')) {
+          throwAppError({
+            trpcCode: 'BAD_REQUEST',
+            appCode: 'BOOK_TITLE_TAKEN',
+            message: 'Book title already taken',
+            field: 'title',
+          });
+        }
+        throw error;
+      }
+    }),
+});
+```
+
+### Pattern
+
+1. Wrap database operations in `try/catch`
+2. Use `isDbError` to detect specific database errors
+3. Call `throwAppError` with appropriate codes and message
+4. Re-throw unknown errors
+
+## Client-Side Error Handling
+
+The error formatter in `trpc.ts` enriches errors sent to the client:
+
+```typescript apps/api/src/trpc/trpc.ts
+errorFormatter({ shape, error }) {
+  const cause = error.cause;
+
+  return {
+    ...shape,
+    data: {
+      ...shape.data,
+      
+      // Zod validation errors
+      zodError:
+        error.code === 'BAD_REQUEST' && cause instanceof ZodError 
+          ? z.flattenError(cause) 
+          : null,
+      
+      // App semantic errors
+      appCode: cause instanceof AppError ? cause.appCode : null,
+      field: cause instanceof AppError ? cause.field : null,
+    },
+  };
+}
+```
+
+### Error Shape
+
+Errors received on the client include:
+
+<ResponseField name="message" type="string">
+  User-friendly error message
+</ResponseField>
+
+<ResponseField name="code" type="TRPCError['code']">
+  HTTP-style error code (`BAD_REQUEST`, `UNAUTHORIZED`, etc.)
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties">
+    <ResponseField name="zodError" type="ZodFormattedError | null">
+      Validation errors from Zod schema. Present when input validation fails.
+    </ResponseField>
+
+    <ResponseField name="appCode" type="AppErrorCode | null">
+      Application error code for type-safe error handling.
+    </ResponseField>
+
+    <ResponseField name="field" type="string | null">
+      Field that caused the error.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### React Example
+
+```typescript
+const createBook = trpc.books.create.useMutation({
+  onError: (error) => {
+    // Type-safe error handling
+    if (error.data?.appCode === 'BOOK_TITLE_TAKEN') {
+      // Show error on the title field
+      form.setError('title', { message: error.message });
+    } else {
+      // Generic error
+      toast.error(error.message);
+    }
+  },
+});
+```
+
+## Database Error Detection
+
+Use `isDbError` to detect specific PostgreSQL errors:
+
+```typescript apps/api/src/core/database/error.ts
+export function isDbError(
+  err: unknown,
+  kind: 'UNIQUE_CONSTRAINT',
+): boolean
+```
+
+### Available Error Kinds
+
+<ParamField path="UNIQUE_CONSTRAINT" type="string">
+  PostgreSQL error code `23505` - Unique constraint violation
+</ParamField>
+
+Extend `PG_ERROR_CODE` in `database/error.ts` to add more error types:
+
+```typescript
+const PG_ERROR_CODE = {
+  UNIQUE_CONSTRAINT: '23505',
+  FOREIGN_KEY: '23503',
+  NOT_NULL: '23502',
+  // ... add more
+} as const;
+```
+
+## Adding Custom Error Codes
+
+Extend the `AppErrorCode` type:
+
+```typescript apps/api/src/trpc/error.ts
+export type AppErrorCode = 
+  | 'BOOK_TITLE_TAKEN' 
+  | 'ORG_REQUIRED' 
+  | 'PAYWALLED' 
+  | 'RATE_LIMITED'
+  | 'YOUR_NEW_ERROR'; // Add here
+```
+
+The error code is automatically inferred to the client, so you get type-safe error handling.

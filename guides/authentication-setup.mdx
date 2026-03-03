@@ -1,0 +1,358 @@
+---
+title: Authentication Setup
+description: Configure Better Auth providers and authentication in Sunny Stack
+---
+
+Sunny Stack uses Better Auth for authentication, giving you full control without vendor lock-in.
+
+## How Authentication Works
+
+Better Auth provides:
+- Email/password authentication (enabled by default)
+- OAuth providers (Google, GitHub, etc.)
+- Session management
+- Type-safe authentication schemas
+
+The auth system is integrated into:
+- **NestJS**: Via auth controller and middleware
+- **tRPC**: Via protected procedures
+- **Database**: User tables managed by Better Auth
+
+## Configuration
+
+### Auth Config File
+
+The main config is in `apps/api/src/core/auth/better-auth/config.ts`:
+
+```typescript
+import type { BetterAuthOptions } from 'better-auth';
+import { trustedOrigins } from '@/config/cors.config';
+
+export interface BetterAuthConfig {
+  secret: string;
+  baseURL: string;
+  basePath: string;
+}
+
+export const createBetterAuthConfig = (
+  config: BetterAuthConfig,
+): Omit<BetterAuthOptions, 'database'> => ({
+  secret: config.secret,
+  baseURL: config.baseURL,
+  basePath: config.basePath,
+  trustedOrigins: trustedOrigins,
+
+  // Session configuration
+  session: {
+    expiresIn: 60 * 60 * 24 * 7, // 7 days
+    updateAge: 60 * 60 * 24, // 1 day
+  },
+
+  // Email and password auth (enabled by default)
+  emailAndPassword: {
+    enabled: true,
+  },
+
+  // Advanced options
+  advanced: {
+    database: {
+      generateId: 'uuid',
+    },
+  },
+});
+```
+
+## Adding OAuth Providers
+
+<Steps>
+
+<Step title="Install provider dependencies">
+
+Better Auth supports many OAuth providers. For example, to add Google:
+
+```bash
+cd apps/api
+pnpm add @better-auth/google
+```
+
+</Step>
+
+<Step title="Get OAuth credentials">
+
+For Google OAuth:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing
+3. Enable Google+ API
+4. Create OAuth 2.0 credentials
+5. Add authorized redirect URI: `http://localhost:8000/api/auth/callback/google`
+6. Copy Client ID and Client Secret
+
+</Step>
+
+<Step title="Add environment variables">
+
+Add to your `.env` file:
+
+```bash
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_CLIENT_SECRET=your-client-secret
+```
+
+</Step>
+
+<Step title="Update auth config">
+
+Modify `config.ts` to include the provider:
+
+```typescript
+import type { BetterAuthOptions } from 'better-auth';
+import { trustedOrigins } from '@/config/cors.config';
+
+export const createBetterAuthConfig = (
+  config: BetterAuthConfig,
+): Omit<BetterAuthOptions, 'database'> => ({
+  secret: config.secret,
+  baseURL: config.baseURL,
+  basePath: config.basePath,
+  trustedOrigins: trustedOrigins,
+
+  session: {
+    expiresIn: 60 * 60 * 24 * 7,
+    updateAge: 60 * 60 * 24,
+  },
+
+  emailAndPassword: {
+    enabled: true,
+  },
+
+  // Add social providers
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    },
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    },
+  },
+
+  advanced: {
+    database: {
+      generateId: 'uuid',
+    },
+  },
+});
+```
+
+</Step>
+
+<Step title="Regenerate auth schema">
+
+Better Auth manages its own database tables. Regenerate after config changes:
+
+```bash
+pnpm auth:generate
+```
+
+This updates `apps/api/src/core/database/schema/better-auth.ts`.
+
+</Step>
+
+<Step title="Run migrations">
+
+Apply the schema changes:
+
+```bash
+pnpm db:generate
+pnpm db:push
+```
+
+</Step>
+
+</Steps>
+
+## Using Auth in tRPC
+
+### Protected Procedures
+
+Use `protectedProcedure` to require authentication (trpc.ts:33-44):
+
+```typescript
+import { protectedProcedure, router } from '@/trpc/trpc';
+import { taskTable } from '@/core/database/schema';
+import { eq } from 'drizzle-orm';
+
+export const tasksRouter = router({
+  // Only authenticated users can create tasks
+  create: protectedProcedure
+    .input(z.object({ title: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      // ctx.user is guaranteed to exist
+      const [task] = await ctx.db
+        .insert(taskTable)
+        .values({
+          title: input.title,
+          userId: ctx.user.id, // User ID is available
+        })
+        .returning();
+
+      return task;
+    }),
+
+  // Get current user's tasks
+  myTasks: protectedProcedure.query(async ({ ctx }) => {
+    return ctx.db
+      .select()
+      .from(taskTable)
+      .where(eq(taskTable.userId, ctx.user.id));
+  }),
+});
+```
+
+### Public Procedures
+
+Public procedures work with optional auth:
+
+```typescript
+import { publicProcedure, router } from '@/trpc/trpc';
+
+export const booksRouter = router({
+  list: publicProcedure.query(async ({ ctx }) => {
+    // ctx.user might be null
+    const userId = ctx.user?.id;
+    
+    // Return personalized results if logged in
+    if (userId) {
+      return getPersonalizedBooks(userId);
+    }
+    
+    return getAllBooks();
+  }),
+});
+```
+
+## Frontend Integration
+
+Better Auth provides React hooks for the frontend:
+
+```typescript
+import { useSession, signIn, signOut } from '@/lib/auth';
+
+function ProfileButton() {
+  const { data: session, isLoading } = useSession();
+
+  if (isLoading) return <div>Loading...</div>;
+
+  if (!session) {
+    return (
+      <button onClick={() => signIn.email({ 
+        email: 'user@example.com', 
+        password: 'password' 
+      })}>
+        Sign In
+      </button>
+    );
+  }
+
+  return (
+    <div>
+      <p>Welcome, {session.user.email}</p>
+      <button onClick={() => signOut()}>Sign Out</button>
+    </div>
+  );
+}
+```
+
+## Auth Endpoints
+
+Better Auth creates these endpoints automatically (config.ts:15):
+
+- `POST /api/auth/sign-up` - Create account
+- `POST /api/auth/sign-in` - Login
+- `POST /api/auth/sign-out` - Logout
+- `GET /api/auth/session` - Get current session
+- `GET /api/auth/callback/:provider` - OAuth callbacks
+
+## Session Configuration
+
+Customize session behavior (config.ts:20-23):
+
+```typescript
+session: {
+  expiresIn: 60 * 60 * 24 * 7,  // 7 days until session expires
+  updateAge: 60 * 60 * 24,      // Extend session every 24 hours
+}
+```
+
+- **expiresIn**: Total session lifetime
+- **updateAge**: How often to refresh the session expiration
+
+## Environment Variables
+
+Required variables for auth:
+
+```bash
+# Better Auth
+BETTER_AUTH_SECRET=your-secret-key-here
+BETTER_AUTH_URL=http://localhost:8000
+
+# OAuth (optional)
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+```
+
+<Warning>
+  Generate a secure secret for production:
+  ```bash
+  openssl rand -base64 32
+  ```
+</Warning>
+
+## Common Patterns
+
+### Get Current User
+
+```typescript
+protectedProcedure.query(async ({ ctx }) => {
+  const user = ctx.user; // { id, email, name, ... }
+  const session = ctx.session; // { token, expiresAt, ... }
+  
+  return { user, session };
+});
+```
+
+### Check Permissions
+
+```typescript
+protectedProcedure
+  .input(z.object({ taskId: z.string() }))
+  .mutation(async ({ ctx, input }) => {
+    const task = await ctx.db.query.tasks.findFirst({
+      where: eq(taskTable.id, input.taskId),
+    });
+
+    if (task.userId !== ctx.user.id) {
+      throw new TRPCError({ 
+        code: 'FORBIDDEN', 
+        message: 'Not your task' 
+      });
+    }
+
+    // Proceed with mutation
+  });
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Protected Routes" icon="lock" href="/guides/adding-trpc-routes">
+    Use auth in your tRPC procedures
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/guides/deployment">
+    Deploy your app with auth
+  </Card>
+</CardGroup>

@@ -1,0 +1,494 @@
+---
+title: Better Auth Setup
+description: How Better Auth is integrated with NestJS and Drizzle for authentication and session management
+---
+
+## Overview
+
+Sunny Stack uses **Better Auth** for authentication. Better Auth is a modern auth library with excellent TypeScript support, session management, and easy integration with Drizzle ORM.
+
+## Auth Module
+
+The auth module configures Better Auth as a NestJS provider:
+
+```ts core/auth/auth.module.ts
+import { Inject, Module, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { HttpAdapterHost } from '@nestjs/core';
+import type { Auth } from 'better-auth';
+import { type Database, DB_CONNECTION } from '@/core/database';
+import { createBetterAuthConfig } from './better-auth/config';
+import { BETTER_AUTH } from './better-auth/constants';
+import { AuthController } from './auth.controller';
+import { AuthSessionService } from './auth-session.service';
+
+@Module({
+  providers: [
+    {
+      provide: BETTER_AUTH,
+      useFactory: async (db: Database, config: ConfigService) => {
+        const { betterAuth } = await import('better-auth');
+        const { drizzleAdapter } = await import('better-auth/adapters/drizzle');
+
+        return betterAuth({
+          database: drizzleAdapter(db, { provider: 'pg' }),
+          ...createBetterAuthConfig({
+            secret: config.getOrThrow('BETTER_AUTH_SECRET'),
+            baseURL: config.getOrThrow('SELF_BASE_URL'),
+            basePath: config.getOrThrow('BETTER_AUTH_BASE_PATH'),
+          }),
+        });
+      },
+      inject: [DB_CONNECTION, ConfigService],
+    },
+    AuthSessionService,
+  ],
+  exports: [BETTER_AUTH, AuthSessionService],
+  controllers: [AuthController],
+})
+export class AuthModule implements OnModuleInit {
+  constructor(
+    private readonly adapter: HttpAdapterHost,
+    private readonly configService: ConfigService,
+    @Inject(BETTER_AUTH) private readonly betterAuth: Auth,
+  ) {}
+
+  async onModuleInit() {
+    // Mount BetterAuth routes
+    const basePath = this.configService.getOrThrow<string>('BETTER_AUTH_BASE_PATH');
+    const { toNodeHandler } = await import('better-auth/node');
+
+    this.adapter.httpAdapter.all(`${basePath}/*splat`, toNodeHandler(this.betterAuth));
+  }
+}
+```
+
+### Key Features
+
+<AccordionGroup>
+  <Accordion title="Dynamic imports">
+    Better Auth is imported dynamically to support edge runtimes and reduce bundle size.
+  </Accordion>
+  <Accordion title="Drizzle adapter">
+    Uses the existing Drizzle database connection for auth tables.
+  </Accordion>
+  <Accordion title="onModuleInit hook">
+    Mounts Better Auth routes (like `/api/auth/signin`) when the module initializes.
+  </Accordion>
+  <Accordion title="Configuration injection">
+    Reads auth configuration from environment variables via `ConfigService`.
+  </Accordion>
+</AccordionGroup>
+
+## Better Auth Configuration
+
+```ts core/auth/better-auth/config.ts
+import type { BetterAuthOptions } from 'better-auth';
+import { trustedOrigins } from '@/config/cors.config';
+
+export interface BetterAuthConfig {
+  secret: string;
+  baseURL: string;
+  basePath: string;
+}
+
+export const createBetterAuthConfig = (
+  config: BetterAuthConfig,
+): Omit<BetterAuthOptions, 'database'> => ({
+  secret: config.secret,
+  baseURL: config.baseURL,
+  basePath: config.basePath,
+  trustedOrigins: trustedOrigins,
+
+  // Session
+  session: {
+    expiresIn: 60 * 60 * 24 * 7, // 7 days
+    updateAge: 60 * 60 * 24, // 1 day (every 1 day the session expiration is updated)
+  },
+
+  // Methods
+  emailAndPassword: {
+    enabled: true,
+  },
+  advanced: {
+    database: {
+      generateId: 'uuid',
+    },
+  },
+});
+```
+
+### Configuration Options
+
+<ResponseField name="secret" type="string" required>
+  Secret key for signing tokens and cookies. Set via `BETTER_AUTH_SECRET` env var.
+</ResponseField>
+
+<ResponseField name="baseURL" type="string" required>
+  The base URL of your API (e.g., `http://localhost:8000`). Set via `SELF_BASE_URL`.
+</ResponseField>
+
+<ResponseField name="basePath" type="string" required>
+  Path where auth routes are mounted (e.g., `/api/auth`). Set via `BETTER_AUTH_BASE_PATH`.
+</ResponseField>
+
+<ResponseField name="trustedOrigins" type="string[]" required>
+  List of allowed frontend origins for CORS. Shared with main CORS config.
+</ResponseField>
+
+<ResponseField name="session.expiresIn" type="number">
+  Session duration in seconds. Default: 7 days.
+</ResponseField>
+
+<ResponseField name="session.updateAge" type="number">
+  How often to refresh session expiration. Default: 1 day.
+</ResponseField>
+
+## Environment Variables
+
+Required environment variables:
+
+```bash .env
+BETTER_AUTH_SECRET="your-secret-key-here"
+SELF_BASE_URL="http://localhost:8000"
+BETTER_AUTH_BASE_PATH="/api/auth"
+```
+
+<Warning>
+  Never commit `BETTER_AUTH_SECRET` to version control. Use a strong random string in production.
+</Warning>
+
+## Auth Session Service
+
+The `AuthSessionService` validates sessions from requests:
+
+```ts core/auth/auth-session.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import type { Auth } from 'better-auth';
+import { fromNodeHeaders } from 'better-auth/node';
+import type { Request } from 'express';
+import { BETTER_AUTH } from './better-auth/constants';
+
+@Injectable()
+export class AuthSessionService {
+  constructor(@Inject(BETTER_AUTH) private readonly betterAuth: Auth) {}
+
+  async getSession(req: Request) {
+    // Better Auth expects Web Headers.
+    // fromNodeHeaders converts Express req.headers appropriately.
+    return this.betterAuth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+  }
+}
+```
+
+### Usage
+
+This service is used by:
+- `TrpcContextFactory` to add session to tRPC context
+- `AuthGuard` to protect NestJS REST endpoints
+
+## Auth Guard
+
+The `AuthGuard` protects NestJS REST endpoints:
+
+```ts common/guards/auth.guard.ts
+import {
+  CanActivate,
+  ExecutionContext,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import type { Session, User } from 'better-auth';
+import type { Request } from 'express';
+import { type Auth, BETTER_AUTH } from '@/core/auth/better-auth';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+
+export interface AuthGuardRequest extends Request {
+  headers: Record<string, string | string[] | undefined>;
+  session?: Session;
+  user?: User;
+}
+
+@Injectable()
+export class AuthGuard implements CanActivate {
+  constructor(
+    @Inject(BETTER_AUTH) private readonly betterAuth: Auth,
+    private readonly reflector: Reflector,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    // 1. Check if Public
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
+    // 2. Get Request
+    const request = context.switchToHttp().getRequest<AuthGuardRequest>();
+
+    // 3. Build Headers from Express headers
+    const headers = new Headers();
+    const rawHeaders = request.headers;
+
+    for (const [key, value] of Object.entries(rawHeaders)) {
+      if (value == null) continue;
+      headers.append(key, Array.isArray(value) ? value.join(', ') : value);
+    }
+
+    // 4. Get Session
+    const sessionResult = await this.betterAuth.api.getSession({ headers });
+
+    if (!sessionResult?.session) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    // 5. Attach Session and User to Request
+    request.session = sessionResult.session;
+    request.user = sessionResult.user;
+
+    // 6. Allow Request
+    return true;
+  }
+}
+```
+
+### Using Auth Guard
+
+<Tabs>
+  <Tab title="Protected by default">
+    Apply guard globally in `main.ts` (not shown in source, but recommended):
+
+    ```ts
+    app.useGlobalGuards(new AuthGuard());
+    ```
+  </Tab>
+  <Tab title="Per controller">
+    ```ts
+    @Controller('books')
+    @UseGuards(AuthGuard)
+    export class BooksController {
+      // All routes require auth
+    }
+    ```
+  </Tab>
+  <Tab title="Public routes">
+    ```ts
+    @Get()
+    @Public() // Skip auth guard
+    getPublicBooks() {
+      return this.booksService.getBooks();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Current User Decorator
+
+Extract the authenticated user from requests:
+
+```ts common/decorators/user.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import type { User } from 'better-auth';
+import { AuthGuardRequest } from '../guards/auth.guard';
+
+export const CurrentUser = createParamDecorator(
+  (field: keyof User | undefined, ctx: ExecutionContext) => {
+    const request: AuthGuardRequest = ctx.switchToHttp().getRequest();
+    const user = request.user;
+    return field ? user?.[field] : user;
+  },
+);
+```
+
+### Usage
+
+```ts
+import { CurrentUser } from '@/common/decorators/user.decorator';
+import type { User } from 'better-auth';
+
+@Controller('profile')
+export class ProfileController {
+  @Get()
+  getProfile(@CurrentUser() user: User) {
+    return user;
+  }
+
+  @Get('email')
+  getEmail(@CurrentUser('email') email: string) {
+    return { email };
+  }
+}
+```
+
+## tRPC Integration
+
+Better Auth session is automatically available in all tRPC procedures:
+
+```ts
+publicProcedure.query(async ({ ctx }) => {
+  // ctx.user is User | null
+  // ctx.session is Session | null
+  if (ctx.user) {
+    console.log('Logged in as:', ctx.user.email);
+  }
+});
+
+protectedProcedure.query(async ({ ctx }) => {
+  // ctx.user is User (guaranteed non-null)
+  // ctx.session is Session (guaranteed non-null)
+  console.log('User ID:', ctx.user.id);
+});
+```
+
+### Protected Procedure Middleware
+
+The `protectedProcedure` enforces authentication:
+
+```ts trpc/trpc.ts
+const requireUser = t.middleware(({ ctx, next }) => {
+  if (!ctx.user || !ctx.session) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Login required' });
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+      session: ctx.session,
+    },
+  });
+});
+
+export const protectedProcedure = t.procedure.use(requireUser);
+```
+
+## Auth Routes
+
+Better Auth automatically creates routes at `BETTER_AUTH_BASE_PATH`:
+
+<CardGroup cols={2}>
+  <Card title="POST /api/auth/sign-up/email" icon="user-plus">
+    Register new user with email/password
+  </Card>
+  <Card title="POST /api/auth/sign-in/email" icon="right-to-bracket">
+    Sign in with email/password
+  </Card>
+  <Card title="POST /api/auth/sign-out" icon="right-from-bracket">
+    Sign out current session
+  </Card>
+  <Card title="GET /api/auth/session" icon="id-card">
+    Get current session info
+  </Card>
+</CardGroup>
+
+## Frontend Integration
+
+Create a Better Auth client in your frontend:
+
+```ts
+import { createAuthClient } from 'better-auth/client';
+
+export const authClient = createAuthClient({
+  baseURL: 'http://localhost:8000',
+  basePath: '/api/auth',
+});
+
+// Sign up
+await authClient.signUp.email({
+  email: 'user@example.com',
+  password: 'password123',
+  name: 'John Doe',
+});
+
+// Sign in
+await authClient.signIn.email({
+  email: 'user@example.com',
+  password: 'password123',
+});
+
+// Get session
+const session = await authClient.getSession();
+
+// Sign out
+await authClient.signOut();
+```
+
+## Database Schema
+
+Better Auth creates its own tables using the Drizzle adapter. The schema is defined in `core/database/schema/better-auth.ts` (generated by Better Auth CLI).
+
+Typical tables:
+- `user` - User accounts
+- `session` - Active sessions
+- `account` - OAuth accounts (if using social login)
+- `verification` - Email verification tokens
+
+## Better Auth CLI
+
+Better Auth provides a CLI for schema management:
+
+```bash
+# Generate migration for Better Auth tables
+npx @better-auth/cli generate
+```
+
+<Note>
+  The generated schema is in `core/auth/better-auth/cli.ts` but you typically don't need to run this manually.
+</Note>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use strong secrets" icon="key">
+    Generate `BETTER_AUTH_SECRET` with `openssl rand -base64 32`
+  </Card>
+  <Card title="Set short session age" icon="clock">
+    Refresh sessions regularly with `updateAge` for better security
+  </Card>
+  <Card title="Trust origins carefully" icon="shield-check">
+    Only add necessary origins to `trustedOrigins`
+  </Card>
+  <Card title="Use protectedProcedure" icon="lock">
+    Default to protected procedures in tRPC, use public only when needed
+  </Card>
+</CardGroup>
+
+## Extending Authentication
+
+You can extend Better Auth with plugins:
+
+```ts
+import { betterAuth } from 'better-auth';
+import { admin } from 'better-auth/plugins';
+
+return betterAuth({
+  database: drizzleAdapter(db, { provider: 'pg' }),
+  plugins: [
+    admin(), // Adds role-based access control
+  ],
+  // ... rest of config
+});
+```
+
+See [Better Auth Plugins](https://better-auth.dev/docs/plugins) for available plugins.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Modules" icon="cube" href="/backend/modules">
+    Build feature modules with authentication
+  </Card>
+  <Card title="tRPC Integration" icon="arrows-left-right" href="/backend/trpc-integration">
+    Use auth in tRPC procedures
+  </Card>
+  <Card title="Database" icon="database" href="/backend/database">
+    Learn about Drizzle ORM
+  </Card>
+  <Card title="Overview" icon="book" href="/backend/overview">
+    Back to architecture overview
+  </Card>
+</CardGroup>

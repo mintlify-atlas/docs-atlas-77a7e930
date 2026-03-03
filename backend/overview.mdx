@@ -1,0 +1,210 @@
+---
+title: Backend Architecture Overview
+description: Understanding the Sunny Stack backend architecture and how components work together
+---
+
+## Architecture Overview
+
+The Sunny Stack backend is built on **NestJS** with **tRPC** for type-safe API endpoints, **Drizzle ORM** for database operations, and **Better Auth** for authentication. This unique architecture combines the best of NestJS's dependency injection system with tRPC's type safety.
+
+## Core Technologies
+
+<CardGroup cols={2}>
+  <Card title="NestJS" icon="cube">
+    Provides dependency injection, modules, and server infrastructure
+  </Card>
+  <Card title="tRPC" icon="arrows-left-right">
+    Type-safe API layer with automatic client/server type synchronization
+  </Card>
+  <Card title="Drizzle ORM" icon="database">
+    TypeScript ORM with excellent type inference and performance
+  </Card>
+  <Card title="Better Auth" icon="shield">
+    Modern authentication library with session management
+  </Card>
+</CardGroup>
+
+## Project Structure
+
+```
+apps/api/src/
+├── main.ts                 # Application entry point
+├── app.module.ts           # Root module
+├── common/                 # Shared utilities
+│   ├── decorators/        # Custom decorators (@Public, @CurrentUser)
+│   └── guards/            # Route guards (AuthGuard)
+├── config/                # Configuration files
+│   └── cors.config.ts     # CORS settings
+├── core/                  # Core infrastructure modules
+│   ├── auth/             # Better Auth setup
+│   └── database/         # Drizzle ORM setup
+├── modules/              # Feature modules
+│   └── books/           # Example: Books module
+└── trpc/                # tRPC setup
+    ├── trpc.ts          # tRPC instance and procedures
+    ├── context.factory.ts # Context creation
+    └── app.router.ts    # Root router
+```
+
+## How It Works Together
+
+### 1. Application Bootstrap
+
+The application starts in `main.ts:9-30`:
+
+```ts main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.enableCors(corsConfig);
+
+  // Setup TRPC
+  const ctxFactory = app.get(TrpcContextFactory);
+
+  app.use(
+    '/trpc',
+    trpcExpress.createExpressMiddleware({
+      router: appRouter,
+      createContext: ({ req }) => ctxFactory.create(req),
+      onError: ({ error }) => {
+        console.error('TRPC error:', error);
+        //  Can add logging here to send to Sentry or other error tracking service
+      },
+    }),
+  );
+
+  await app.listen(process.env.PORT ?? 8000);
+}
+```
+
+### 2. NestJS Dependency Injection → tRPC Context
+
+This is the key innovation: NestJS manages all services through DI, then **injects them into tRPC context**:
+
+```ts context.factory.ts
+@Injectable()
+export class TrpcContextFactory {
+  constructor(
+    @Inject(DB_CONNECTION) private readonly db: Database,
+    private readonly authSessions: AuthSessionService,
+  ) {}
+
+  async create(req: Request): Promise<TrpcContext> {
+    const sessionResult = await this.authSessions.getSession(req);
+
+    return {
+      db: this.db,
+      session: sessionResult?.session ?? null,
+      user: sessionResult?.user ?? null,
+    };
+  }
+}
+```
+
+### 3. Type-Safe API Endpoints
+
+Every tRPC procedure automatically gets the context:
+
+```ts books.router.ts
+export const booksRouter = router({
+  listPublic: publicProcedure.query(async ({ ctx }) => {
+    return ctx.db.select().from(bookTable);
+  }),
+
+  create: protectedProcedure
+    .input(z.object({ title: z.string().min(1), publishedAt: z.coerce.date() }))
+    .mutation(async ({ ctx, input }) => {
+      const [newBook] = await ctx.db
+        .insert(bookTable)
+        .values({ title: input.title, publishedAt: input.publishedAt })
+        .returning();
+      return newBook;
+    }),
+});
+```
+
+## Module System
+
+The application uses NestJS modules for organization:
+
+```ts app.module.ts
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    CoreModule,      // Database + Auth (global)
+    TrpcModule,      // tRPC context factory
+    BooksModule,     // Example feature module
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+```
+
+### Core Module (Global)
+
+The `CoreModule` is marked as `@Global()`, making database and auth services available everywhere:
+
+```ts core.module.ts
+@Global()
+@Module({
+  imports: [AuthModule, DatabaseModule],
+  providers: [],
+  exports: [AuthModule, DatabaseModule],
+})
+export class CoreModule {}
+```
+
+## Request Flow
+
+<Steps>
+  <Step title="Request arrives">
+    Client makes tRPC call to `/trpc/books.listPublic`
+  </Step>
+  <Step title="Context creation">
+    `TrpcContextFactory` creates context with database connection and user session
+  </Step>
+  <Step title="Middleware check">
+    `protectedProcedure` middleware verifies user authentication if needed
+  </Step>
+  <Step title="Procedure execution">
+    Your router function executes with fully typed `ctx` and `input`
+  </Step>
+  <Step title="Response">
+    tRPC serializes response with SuperJSON and sends to client
+  </Step>
+</Steps>
+
+## Benefits of This Architecture
+
+<AccordionGroup>
+  <Accordion title="End-to-end Type Safety">
+    Changes to backend types automatically propagate to frontend. No manual API contracts.
+  </Accordion>
+  <Accordion title="Dependency Injection">
+    NestJS manages all service lifecycles, making testing and modularity easy.
+  </Accordion>
+  <Accordion title="Shared Database Connection">
+    Single Drizzle instance shared across all procedures via context.
+  </Accordion>
+  <Accordion title="Authentication Integration">
+    User session automatically available in every procedure context.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="NestJS Setup" icon="cube" href="/backend/nestjs-setup">
+    Learn about NestJS configuration and modules
+  </Card>
+  <Card title="tRPC Integration" icon="arrows-left-right" href="/backend/trpc-integration">
+    Deep dive into tRPC setup and procedures
+  </Card>
+  <Card title="Database" icon="database" href="/backend/database">
+    Working with Drizzle ORM
+  </Card>
+  <Card title="Authentication" icon="shield" href="/backend/authentication">
+    Better Auth setup and usage
+  </Card>
+</CardGroup>

@@ -1,0 +1,363 @@
+---
+title: NestJS Configuration
+description: How NestJS is configured in Sunny Stack with modules, providers, and dependency injection
+---
+
+## Application Entry Point
+
+The NestJS application bootstraps in `main.ts`:
+
+```ts main.ts
+import { NestFactory } from '@nestjs/core';
+import * as trpcExpress from '@trpc/server/adapters/express';
+
+import corsConfig from './config/cors.config';
+import { appRouter } from './trpc/app.router';
+import { TrpcContextFactory } from './trpc/context.factory';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.enableCors(corsConfig);
+
+  // Setup TRPC
+  const ctxFactory = app.get(TrpcContextFactory);
+
+  app.use(
+    '/trpc',
+    trpcExpress.createExpressMiddleware({
+      router: appRouter,
+      createContext: ({ req }) => ctxFactory.create(req),
+      onError: ({ error }) => {
+        console.error('TRPC error:', error);
+      },
+    }),
+  );
+
+  await app.listen(process.env.PORT ?? 8000);
+}
+bootstrap().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});
+```
+
+### Key Points
+
+- `NestFactory.create(AppModule)` initializes the entire dependency injection container
+- `app.get(TrpcContextFactory)` retrieves the factory from the DI container
+- tRPC middleware is mounted at `/trpc` endpoint
+- CORS is configured from `cors.config.ts`
+
+## Root Module
+
+The `AppModule` imports all feature modules:
+
+```ts app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+import { CoreModule } from './core/core.module';
+import { BooksModule } from './modules/books/books.module';
+import { TrpcModule } from './trpc/trpc.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    CoreModule,
+    TrpcModule,
+    BooksModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+```
+
+### Module Breakdown
+
+<CardGroup cols={2}>
+  <Card title="ConfigModule" icon="gear">
+    NestJS config module with `isGlobal: true` makes environment variables accessible everywhere
+  </Card>
+  <Card title="CoreModule" icon="cube">
+    Global module providing database and authentication services
+  </Card>
+  <Card title="TrpcModule" icon="arrows-left-right">
+    Provides `TrpcContextFactory` for tRPC integration
+  </Card>
+  <Card title="BooksModule" icon="book">
+    Example feature module (can add more modules here)
+  </Card>
+</CardGroup>
+
+## Core Module (Global)
+
+The `CoreModule` is marked with `@Global()` to make its exports available everywhere:
+
+```ts core/core.module.ts
+import { Global, Module } from '@nestjs/common';
+
+import { AuthModule } from './auth/auth.module';
+import { DatabaseModule } from './database/database.module';
+
+@Global()
+@Module({
+  imports: [AuthModule, DatabaseModule],
+  providers: [],
+  exports: [AuthModule, DatabaseModule],
+})
+export class CoreModule {}
+```
+
+<Note>
+  `@Global()` means you don't need to re-import `CoreModule` in every feature module. The database and auth services are automatically available.
+</Note>
+
+## CORS Configuration
+
+CORS is configured in `config/cors.config.ts`:
+
+```ts config/cors.config.ts
+import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
+
+export const trustedOrigins = [
+  'https://dashboard.withslab.com',
+  'https://withslab.com',
+  ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000'] : []),
+];
+
+export const corsConfig: CorsOptions = {
+  origin: trustedOrigins,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+};
+
+export default corsConfig;
+```
+
+### Important Settings
+
+- **credentials: true** - Required for cookie-based authentication (Better Auth uses cookies)
+- **trustedOrigins** - Whitelist of allowed frontend origins
+- **localhost:3000** - Only added in development mode
+
+## Dependency Injection
+
+NestJS uses constructor-based dependency injection:
+
+### Example: Books Service
+
+```ts modules/books/books.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { type Database, DB_CONNECTION } from '@/core/database/database.constants';
+import { bookTable } from '@/core/database/schema';
+
+@Injectable()
+export class BooksService {
+  constructor(@Inject(DB_CONNECTION) private readonly db: Database) {}
+
+  getBooks() {
+    return this.db.select().from(bookTable);
+  }
+}
+```
+
+### How It Works
+
+1. `@Injectable()` marks the class as a provider
+2. `@Inject(DB_CONNECTION)` tells NestJS to inject the database connection
+3. NestJS resolves the dependency from the DI container
+4. The `db` instance is available in all methods
+
+## Custom Decorators
+
+Sunny Stack includes custom decorators for common patterns:
+
+### @Public Decorator
+
+Marks routes as public (skips authentication):
+
+```ts common/decorators/public.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+
+export const IS_PUBLIC_KEY = 'isPublic';
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+```
+
+Usage:
+
+```ts
+@Controller('books')
+export class BooksController {
+  @Get()
+  @Public()
+  getBooks() {
+    return this.booksService.getBooks();
+  }
+}
+```
+
+### @CurrentUser Decorator
+
+Extracts the current user from the request:
+
+```ts common/decorators/user.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import type { User } from 'better-auth';
+import { AuthGuardRequest } from '../guards/auth.guard';
+
+export const CurrentUser = createParamDecorator(
+  (field: keyof User | undefined, ctx: ExecutionContext) => {
+    const request: AuthGuardRequest = ctx.switchToHttp().getRequest();
+    const user = request.user;
+    return field ? user?.[field] : user;
+  },
+);
+```
+
+Usage:
+
+```ts
+@Get('profile')
+getProfile(@CurrentUser() user: User) {
+  return user;
+}
+
+// Or extract specific field
+@Get('email')
+getEmail(@CurrentUser('email') email: string) {
+  return email;
+}
+```
+
+## Auth Guard
+
+The `AuthGuard` protects routes and injects user/session into requests:
+
+```ts common/guards/auth.guard.ts
+import {
+  CanActivate,
+  ExecutionContext,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import type { Session, User } from 'better-auth';
+import type { Request } from 'express';
+import { type Auth, BETTER_AUTH } from '@/core/auth/better-auth';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+
+export interface AuthGuardRequest extends Request {
+  headers: Record<string, string | string[] | undefined>;
+  session?: Session;
+  user?: User;
+}
+
+@Injectable()
+export class AuthGuard implements CanActivate {
+  constructor(
+    @Inject(BETTER_AUTH) private readonly betterAuth: Auth,
+    private readonly reflector: Reflector,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    // 1. Check if Public
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
+    // 2. Get Request
+    const request = context.switchToHttp().getRequest<AuthGuardRequest>();
+
+    // 3. Build Headers from Express headers
+    const headers = new Headers();
+    const rawHeaders = request.headers;
+
+    for (const [key, value] of Object.entries(rawHeaders)) {
+      if (value == null) continue;
+      headers.append(key, Array.isArray(value) ? value.join(', ') : value);
+    }
+
+    // 4. Get Session
+    const sessionResult = await this.betterAuth.api.getSession({ headers });
+
+    if (!sessionResult?.session) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    // 5. Attach Session and User to Request
+    request.session = sessionResult.session;
+    request.user = sessionResult.user;
+
+    // 6. Allow Request
+    return true;
+  }
+}
+```
+
+### How Auth Guard Works
+
+<Steps>
+  <Step title="Check @Public decorator">
+    If route is marked with `@Public()`, skip authentication
+  </Step>
+  <Step title="Extract request headers">
+    Convert Express headers to Web Headers format
+  </Step>
+  <Step title="Verify session">
+    Call Better Auth to validate session from cookies/headers
+  </Step>
+  <Step title="Attach user to request">
+    If valid, attach `session` and `user` to request object
+  </Step>
+  <Step title="Throw if unauthorized">
+    If no valid session, throw `UnauthorizedException`
+  </Step>
+</Steps>
+
+## Environment Configuration
+
+Access environment variables using `ConfigService`:
+
+```ts
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly config: ConfigService) {}
+
+  doSomething() {
+    const apiKey = this.config.get<string>('API_KEY');
+    const port = this.config.getOrThrow<number>('PORT'); // Throws if missing
+  }
+}
+```
+
+<Warning>
+  Use `getOrThrow()` for required environment variables to fail fast on startup.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="tRPC Integration" icon="arrows-left-right" href="/backend/trpc-integration">
+    Learn how tRPC integrates with NestJS
+  </Card>
+  <Card title="Creating Modules" icon="cube" href="/backend/modules">
+    Build your own NestJS modules
+  </Card>
+  <Card title="Database" icon="database" href="/backend/database">
+    Working with Drizzle ORM
+  </Card>
+  <Card title="Authentication" icon="shield" href="/backend/authentication">
+    Better Auth setup
+  </Card>
+</CardGroup>

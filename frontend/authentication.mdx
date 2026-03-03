@@ -1,0 +1,454 @@
+---
+title: Authentication
+description: Frontend authentication with Better Auth client and protected routes
+icon: shield
+---
+
+## Overview
+
+Sunny Stack uses [Better Auth](https://better-auth.com) for authentication. The frontend client handles sign in, sign up, sign out, and session management with full TypeScript support.
+
+## Auth Client Setup
+
+The Better Auth client is configured in `src/api/better-auth/client.ts`:
+
+```tsx src/api/better-auth/client.ts
+import { createAuthClient } from 'better-auth/react';
+
+export const authClient = createAuthClient({
+  baseURL: `${import.meta.env.VITE_API_BASE_URL}/auth/client`,
+});
+```
+
+<Info>
+  The `baseURL` points to your backend auth endpoint. Update `VITE_API_BASE_URL` in your environment variables.
+</Info>
+
+## Session Management
+
+### Session Query
+
+Define a query for the current session:
+
+```tsx src/features/auth/api/queries.ts
+import { queryOptions } from '@tanstack/react-query';
+import { authClient } from '@/api/better-auth/client';
+
+// Query keys
+export const AUTH_QUERY_KEYS = {
+  all: ['auth'],
+  session: () => [...AUTH_QUERY_KEYS.all, 'session'],
+} as const;
+
+export const sessionQueryOptions = queryOptions({
+  queryKey: AUTH_QUERY_KEYS.session(),
+  queryFn: async () => {
+    const { data } = await authClient.getSession();
+    return data ?? null;
+  },
+  staleTime: 30_000, // 30 seconds
+});
+```
+
+### Using Session in Components
+
+Access session data from route context:
+
+```tsx src/routes/_protected/index.tsx
+import { createFileRoute } from '@tanstack/react-router';
+
+export const Route = createFileRoute('/_protected/')({
+  component: RouteComponent,
+});
+
+function RouteComponent() {
+  const { session } = Route.useRouteContext(); // From layout route
+  
+  return (
+    <div>
+      <p>User ID: {session.user.id}</p>
+      <p>Email: {session.user.email}</p>
+      <p>Session ID: {session.session.id}</p>
+    </div>
+  );
+}
+```
+
+## Sign In
+
+### Sign In Hook
+
+Create a hook for sign in logic:
+
+```tsx src/features/auth/hooks/use-sign-in.ts
+import { useQueryClient } from '@tanstack/react-query';
+import { useRouter } from '@tanstack/react-router';
+import { toast } from 'sonner';
+import { authClient } from '@/api/better-auth/client';
+import { sessionQueryOptions } from '../api/queries';
+
+export function useSignIn() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  return async function signIn(input: { email: string; password: string }) {
+    const result = await authClient.signIn.email({
+      email: input.email,
+      password: input.password,
+      rememberMe: true,
+    });
+
+    if (result.error) {
+      toast.error(result.error.message);
+      return null;
+    }
+
+    // Refresh cached session, then re-run route guards/loaders
+    await queryClient.refetchQueries({ queryKey: sessionQueryOptions.queryKey });
+    await router.invalidate();
+
+    return result;
+  };
+}
+```
+
+<Note>
+  After signing in, we refetch the session query and invalidate the router to re-run route guards.
+</Note>
+
+### Sign In Form
+
+Implement a sign-in form with validation:
+
+```tsx src/features/auth/components/sign-in.tsx
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Button } from '@repo/ui/components/button';
+import { Field, FieldError, FieldGroup, FieldLabel } from '@repo/ui/components/field';
+import { Input } from '@repo/ui/components/input';
+import { useNavigate } from '@tanstack/react-router';
+import { Controller, useForm } from 'react-hook-form';
+import { toast } from 'sonner';
+import * as z from 'zod';
+import { Route as AuthRoute } from '@/routes/_auth/route';
+import { useSignIn } from '../hooks/use-sign-in';
+
+const formSchema = z.object({
+  email: z.email('Please enter a valid email address.'),
+  password: z.string().min(1, 'Password is required.'),
+});
+
+type SignInFormData = z.infer<typeof formSchema>;
+
+const SignIn = () => {
+  const navigate = useNavigate();
+  const signIn = useSignIn();
+  const { redirect } = AuthRoute.useSearch();
+
+  const form = useForm<SignInFormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { email: '', password: '' },
+  });
+
+  const onSubmit = async (data: SignInFormData) => {
+    const result = await signIn(data);
+    if (!result) {
+      const errorMessage = 'Invalid email or password';
+      form.setError('email', { type: 'server', message: errorMessage });
+      form.setError('password', { type: 'server', message: errorMessage });
+      return;
+    }
+
+    toast.success('Signed in');
+    await navigate({ to: redirect || '/' });
+  };
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-6">
+      <FieldGroup className="gap-5">
+        <Controller
+          name="email"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid} className="gap-2">
+              <FieldLabel htmlFor="email">Email</FieldLabel>
+              <Input
+                {...field}
+                id="email"
+                type="email"
+                aria-invalid={fieldState.invalid}
+                placeholder="Enter your email"
+                autoComplete="email"
+              />
+              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+            </Field>
+          )}
+        />
+
+        <Controller
+          name="password"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid} className="gap-2">
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <Input
+                {...field}
+                id="password"
+                type="password"
+                aria-invalid={fieldState.invalid}
+                placeholder="Enter your password"
+                autoComplete="current-password"
+              />
+              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+            </Field>
+          )}
+        />
+      </FieldGroup>
+
+      <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+        {form.formState.isSubmitting ? 'Signing in...' : 'Sign in'}
+      </Button>
+    </form>
+  );
+};
+
+export default SignIn;
+```
+
+## Sign Out
+
+### Sign Out Hook
+
+Create a hook for sign out:
+
+```tsx src/features/auth/hooks/use-sign-out.ts
+import { useQueryClient } from '@tanstack/react-query';
+import { useRouter } from '@tanstack/react-router';
+import { authClient } from '@/api/better-auth/client';
+import { sessionQueryOptions } from '../api/queries';
+
+export function useSignOut() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  return async function signOut() {
+    await authClient.signOut();
+
+    // Clear session and redirect
+    queryClient.setQueryData(sessionQueryOptions.queryKey, null);
+    await router.invalidate();
+  };
+}
+```
+
+### Sign Out Button
+
+Use in components:
+
+```tsx
+import { Button } from '@repo/ui/components/button';
+import { useSignOut } from '@/features/auth/hooks/use-sign-out';
+
+function UserMenu() {
+  const signOut = useSignOut();
+  
+  return (
+    <Button onClick={() => signOut()}>
+      Sign Out
+    </Button>
+  );
+}
+```
+
+## Protected Routes
+
+### Protected Layout
+
+Create a layout that requires authentication:
+
+```tsx src/routes/_protected/route.tsx
+import { createFileRoute, Outlet, redirect } from '@tanstack/react-router';
+import { sessionQueryOptions } from '@/features/auth/api/queries';
+
+export const Route = createFileRoute('/_protected')({
+  component: RouteComponent,
+  beforeLoad: async ({ context: { queryClient } }) => {
+    const session = await queryClient.ensureQueryData(sessionQueryOptions);
+    if (!session) {
+      throw redirect({ to: '/sign-in', search: { redirect: location.href } });
+    }
+    return { session };
+  },
+});
+
+function RouteComponent() {
+  return <Outlet />;
+}
+```
+
+<Info>
+  All routes under `_protected/` will require authentication. Unauthenticated users are redirected to `/sign-in`.
+</Info>
+
+### Auth Layout
+
+Create a layout that redirects authenticated users:
+
+```tsx src/routes/_auth/route.tsx
+import { createFileRoute, Outlet, redirect } from '@tanstack/react-router';
+import { z } from 'zod';
+import { sessionQueryOptions } from '@/features/auth/api/queries';
+
+export const Route = createFileRoute('/_auth')({
+  component: RouteComponent,
+  validateSearch: z.object({
+    redirect: z.string().optional().catch(''),
+  }),
+  beforeLoad: async ({ context: { queryClient }, search }) => {
+    const session = await queryClient.ensureQueryData(sessionQueryOptions);
+    if (session) {
+      throw redirect({ to: search.redirect || '/' });
+    }
+  },
+});
+
+function RouteComponent() {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center overflow-hidden bg-[#FBFAF9]">
+      <div className="w-full max-w-sm rounded-xl border border-neutral-200 bg-white p-8 shadow-xs">
+        <Outlet />
+      </div>
+    </div>
+  );
+}
+```
+
+## Auth Flow
+
+### 1. User signs in
+
+```tsx
+const result = await authClient.signIn.email({
+  email: 'user@example.com',
+  password: 'password123',
+  rememberMe: true,
+});
+```
+
+### 2. Session is stored
+
+Better Auth stores the session as an HTTP-only cookie.
+
+### 3. Query cache is updated
+
+```tsx
+await queryClient.refetchQueries({ queryKey: sessionQueryOptions.queryKey });
+```
+
+### 4. Router is invalidated
+
+```tsx
+await router.invalidate();
+```
+
+### 5. Route guards re-run
+
+The `beforeLoad` functions re-run, checking the new session.
+
+### 6. User is redirected
+
+Authenticated users are redirected to protected routes.
+
+## Redirect After Login
+
+Capture the original URL and redirect after login:
+
+```tsx
+// Protected route redirects to sign-in with redirect param
+throw redirect({ to: '/sign-in', search: { redirect: location.href } });
+
+// Auth route reads redirect param
+const { redirect } = AuthRoute.useSearch();
+
+// After sign in, navigate to redirect or home
+await navigate({ to: redirect || '/' });
+```
+
+## Session Stale Time
+
+Configure how often the session is refetched:
+
+```tsx
+export const sessionQueryOptions = queryOptions({
+  queryKey: AUTH_QUERY_KEYS.session(),
+  queryFn: async () => {
+    const { data } = await authClient.getSession();
+    return data ?? null;
+  },
+  staleTime: 30_000, // 30 seconds
+});
+```
+
+<Tip>
+  Set a reasonable stale time to balance security and performance. 30 seconds is a good default.
+</Tip>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use layout routes for auth">
+    Create `_protected` and `_auth` layout groups to handle authentication logic in one place.
+  </Accordion>
+  
+  <Accordion title="Invalidate router after auth changes">
+    Always call `router.invalidate()` after sign in or sign out to re-run route guards.
+  </Accordion>
+  
+  <Accordion title="Store redirect URL">
+    Capture the original URL before redirecting to sign in for better UX.
+  </Accordion>
+  
+  <Accordion title="Handle errors gracefully">
+    Show toast notifications for auth errors and set form errors appropriately.
+  </Accordion>
+  
+  <Accordion title="Use rememberMe for persistence">
+    Set `rememberMe: true` to keep users signed in across sessions.
+  </Accordion>
+</AccordionGroup>
+
+## Sign Up (Similar Pattern)
+
+Sign up follows the same pattern as sign in:
+
+```tsx src/features/auth/hooks/use-sign-up.ts
+export function useSignUp() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  return async function signUp(input: { email: string; password: string; name: string }) {
+    const result = await authClient.signUp.email(input);
+
+    if (result.error) {
+      toast.error(result.error.message);
+      return null;
+    }
+
+    // Refresh session and invalidate router
+    await queryClient.refetchQueries({ queryKey: sessionQueryOptions.queryKey });
+    await router.invalidate();
+
+    return result;
+  };
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="TanStack Router" icon="route" href="/frontend/tanstack-router">
+    Learn more about route protection
+  </Card>
+  <Card title="Backend Auth" icon="shield" href="/backend/better-auth">
+    Understand the auth backend
+  </Card>
+</CardGroup>

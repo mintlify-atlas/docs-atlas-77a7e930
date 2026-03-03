@@ -1,0 +1,132 @@
+---
+title: Why Sunny Stack?
+description: Understanding the technology choices and philosophy behind Sunny Stack
+---
+
+# Why These Technologies?
+
+Sunny Stack combines carefully chosen technologies that work together to provide end-to-end type safety, clean architecture, and developer productivity. Here's the reasoning behind each choice.
+
+## Backend Technologies
+
+### NestJS
+
+**Why we chose it:**
+- **Opinionated structure** - Forces you into a clean, modular architecture that many pure Express apps lack
+- **Battle-tested** - More than a decade of use in enterprise environments with a robust ecosystem
+- **Still just Express** - Under the hood it's Express, making it easy to drop down and customize when needed
+- **Dependency injection** - The module + DI system keeps code organized as your app scales
+
+The framework enforces structure through modules and services, making it easier to maintain proper separation of concerns for S3 integrations, email services, billing logic, and more.
+
+<Tip>
+NestJS shines in larger applications where architectural discipline prevents technical debt from accumulating.
+</Tip>
+
+### tRPC Integration
+
+**Why tRPC with NestJS:**
+- **End-to-end type safety** - One of the biggest wins of a TypeScript monorepo is type safety between frontend and backend via shared types
+- **Better than alternatives** - Previous approaches (nestjs-zod, OpenAPI generation, Orval client) felt like "tRPC with extra steps"
+- **Best of both worlds** - NestJS services can be injected into tRPC context, combining structure with type safety
+
+**Why not pure tRPC?**
+
+While tRPC alone is powerful, NestJS provides the structural foundation that keeps growing applications maintainable. The combination allows:
+- tRPC for type-safe frontend application calls
+- Traditional REST endpoints for webhooks, auth callbacks, and external integrations
+- Full access to NestJS's dependency injection and module system
+
+### Drizzle ORM
+
+**Why we chose it:**
+- **Lightweight and intuitive** - Reads like SQL but maintains full type safety
+- **Right abstraction level** - Provides the sweet spot between raw SQL and heavy ORM magic
+- **Type-safe queries** - Your database schema is your source of truth for types
+
+<Note>
+Drizzle's SQL-like syntax means you're never fighting the ORM. If you know SQL, you know Drizzle.
+</Note>
+
+### PostgreSQL
+
+**Why we chose it:**
+- **Proven reliability** - Industry-standard relational database with decades of development
+- **Powerful extensions** - PGVector for embeddings, PostGIS for geospatial data, and many more
+- **Excellent tooling** - Great compatibility with Supabase for managed hosting and additional features
+
+This choice has become standard in modern web development for good reason - PostgreSQL delivers power and reliability without compromise.
+
+### Better Auth
+
+**Why we chose it:**
+- **No vendor lock-in** - Own your authentication logic rather than depending on external services
+- **More secure than DIY** - Pre-built, audited authentication is safer than rolling custom JWT logic
+- **Open source with plugins** - Extensive plugin ecosystem for OAuth, multi-factor auth, and more
+- **Full control** - Run it anywhere, customize everything
+
+<Tip>
+Better Auth gives you the security of a maintained auth library with the freedom of self-hosted infrastructure.
+</Tip>
+
+## Frontend Technologies
+
+### Tanstack Router
+
+**Why we chose it:**
+- **Type-safe navigation** - Route parameters, search params, and navigation are fully typed
+- **File-based routing** - Familiar folder structure similar to Next.js, but for client-side apps
+- **Backend separation** - Maintains clean separation between frontend and backend codebases
+
+**Why not Next.js or Remix?**
+
+For SaaS applications that benefit from client-side rendering, separating frontend and backend provides:
+- Independent deployment and scaling
+- Clearer boundaries and responsibilities
+- Better suited for complex interactive applications
+
+### Tanstack Query
+
+**Why we chose it:**
+- **Industry standard** - The de facto solution for server state management in React
+- **Powerful caching** - Automatic background refetching, cache invalidation, and optimistic updates
+- **Perfect tRPC integration** - Seamlessly works with tRPC for type-safe data fetching
+
+<Note>
+For data fetching in React, Tanstack Query is the right choice. It handles the complexity of server state so you don't have to.
+</Note>
+
+### Shadcn UI
+
+**Why we chose it:**
+- **Code in your repo** - Components live in your codebase, not hidden behind opaque packages
+- **Fully customizable** - Jump in and modify any component when needed
+- **Rapid development** - Pre-built components let you move fast without sacrificing quality
+- **Modern primitives** - Built on Radix UI for accessibility and composability
+
+**About the "all Shadcn apps look the same" critique:**
+
+The components and theming are fully customizable. Similar-looking apps are more about design choices than technical limitations. The primitives are flexible enough to build unique interfaces.
+
+<Tip>
+Think of Shadcn as a starting point, not a constraint. Customize the theme and components to match your brand.
+</Tip>
+
+## Architecture Philosophy
+
+### Monorepo with PNPM Workspaces
+
+**Benefits:**
+- **Shared types** - Import backend types directly in frontend code
+- **Faster installs** - PNPM's content-addressable storage saves disk space and time
+- **Unified tooling** - Single lint, test, and build configuration
+- **Atomic changes** - Update shared code and both apps in one commit
+
+### Opinionated by Design
+
+Sunny Stack embraces constraints that lead to better long-term outcomes:
+- **Forced structure** prevents the "anything goes" chaos of minimal frameworks
+- **Type safety** catches bugs at compile time instead of production
+- **Proven patterns** mean less time debating architecture decisions
+
+The goal is to let you focus on building your product, not assembling and configuring infrastructure.

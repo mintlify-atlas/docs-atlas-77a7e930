@@ -1,0 +1,170 @@
+---
+title: Creating NestJS Modules
+description: Step-by-step guide to creating new modules following Sunny Stack patterns
+---
+
+This guide walks you through creating a new NestJS module in Sunny Stack, using the existing books module as a reference.
+
+## Module Structure
+
+Each module in Sunny Stack follows this structure:
+
+```
+modules/
+└── your-module/
+    ├── your-module.module.ts    # Module definition
+    ├── your-module.service.ts   # Business logic
+    ├── your-module.controller.ts # REST endpoints
+    └── trpc/
+        └── your-module.router.ts # tRPC procedures
+```
+
+## Creating a New Module
+
+<Steps>
+
+<Step title="Create the module directory">
+
+Create a new directory under `apps/api/src/modules/`:
+
+```bash
+mkdir -p apps/api/src/modules/tasks
+mkdir -p apps/api/src/modules/tasks/trpc
+```
+
+</Step>
+
+<Step title="Create the service file">
+
+Create `apps/api/src/modules/tasks/tasks.service.ts`:
+
+```typescript
+import { Inject, Injectable } from '@nestjs/common';
+import { type Database, DB_CONNECTION } from '@/core/database/database.constants';
+import { taskTable } from '@/core/database/schema';
+
+@Injectable()
+export class TasksService {
+  constructor(@Inject(DB_CONNECTION) private readonly db: Database) {}
+
+  getTasks() {
+    return this.db.select().from(taskTable);
+  }
+
+  getTaskById(id: string) {
+    return this.db.select().from(taskTable).where(eq(taskTable.id, id));
+  }
+}
+```
+
+<Note>
+  The `@Inject(DB_CONNECTION)` pattern is how you access the database in Sunny Stack. See books.service.ts:8 for reference.
+</Note>
+
+</Step>
+
+<Step title="Create the controller file">
+
+Create `apps/api/src/modules/tasks/tasks.controller.ts`:
+
+```typescript
+import { Controller, Get } from '@nestjs/common';
+import { TasksService } from './tasks.service';
+
+@Controller('tasks')
+export class TasksController {
+  constructor(private readonly tasksService: TasksService) {}
+
+  @Get()
+  getTasks() {
+    return this.tasksService.getTasks();
+  }
+}
+```
+
+This creates a REST endpoint at `http://localhost:8000/tasks`.
+
+</Step>
+
+<Step title="Create the module file">
+
+Create `apps/api/src/modules/tasks/tasks.module.ts`:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { TasksController } from './tasks.controller';
+import { TasksService } from './tasks.service';
+
+@Module({
+  controllers: [TasksController],
+  providers: [TasksService],
+  exports: [], // Export if other modules need to use this service
+})
+export class TasksModule {}
+```
+
+</Step>
+
+<Step title="Register the module in AppModule">
+
+Add your new module to `apps/api/src/app.module.ts`:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { CoreModule } from './core/core.module';
+import { BooksModule } from './modules/books/books.module';
+import { TasksModule } from './modules/tasks/tasks.module'; // Add this
+import { TrpcModule } from './trpc/trpc.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    CoreModule,
+    TrpcModule,
+    BooksModule,
+    TasksModule, // Add this
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+```
+
+</Step>
+
+<Step title="Test your module">
+
+Start the development server:
+
+```bash
+pnpm dev
+```
+
+Your REST endpoint should now be available at `http://localhost:8000/tasks`.
+
+</Step>
+
+</Steps>
+
+## Real Example: Books Module
+
+The books module demonstrates this pattern perfectly:
+
+- **Service** (books.service.ts:1-14): Injects database and implements business logic
+- **Controller** (books.controller.ts:1-14): Exposes REST endpoints
+- **Module** (books.module.ts:1-12): Ties everything together
+- **AppModule** (app.module.ts:11): Imports BooksModule
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Add tRPC Routes" icon="route" href="/guides/adding-trpc-routes">
+    Add type-safe tRPC procedures to your module
+  </Card>
+  <Card title="Database Schema" icon="database" href="/guides/database-migrations">
+    Create database tables for your module
+  </Card>
+</CardGroup>

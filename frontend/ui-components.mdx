@@ -1,0 +1,470 @@
+---
+title: UI Components
+description: Using Shadcn UI components from the shared UI package
+icon: palette
+---
+
+## Overview
+
+Sunny Stack includes a shared UI package (`@repo/ui`) with pre-built components based on [Shadcn UI](https://ui.shadcn.com/). These components are accessible from any app in the monorepo.
+
+## Component Library
+
+The UI components are located in `packages/ui/src/components/`:
+
+```
+packages/ui/src/components/
+├── alert-dialog.tsx     # Modal dialogs
+├── badge.tsx            # Status badges
+├── button.tsx           # Buttons
+├── card.tsx             # Cards
+├── combobox.tsx         # Searchable selects
+├── dropdown-menu.tsx    # Dropdown menus
+├── field.tsx            # Form fields
+├── input.tsx            # Text inputs
+├── input-group.tsx      # Input with icons/addons
+├── label.tsx            # Form labels
+├── select.tsx           # Select dropdowns
+├── separator.tsx        # Visual separators
+└── textarea.tsx         # Multi-line inputs
+```
+
+## Importing Components
+
+Import components from the `@repo/ui` package:
+
+```tsx
+import { Button } from '@repo/ui/components/button';
+import { Input } from '@repo/ui/components/input';
+import { Field, FieldLabel, FieldError } from '@repo/ui/components/field';
+```
+
+<Info>
+  The `@repo/ui` package is automatically available in all workspace apps. No installation needed!
+</Info>
+
+## Common Components
+
+### Button
+
+Buttons with variants and sizes:
+
+```tsx src/routes/_protected/index.tsx
+import { Button } from '@repo/ui/components/button';
+import { useSignOut } from '@/features/auth/hooks/use-sign-out';
+
+function RouteComponent() {
+  const signOut = useSignOut();
+  
+  return (
+    <Button onClick={() => signOut()}>
+      Sign Out
+    </Button>
+  );
+}
+```
+
+**Button Variants:**
+
+```tsx
+<Button variant="default">Default</Button>
+<Button variant="secondary">Secondary</Button>
+<Button variant="outline">Outline</Button>
+<Button variant="ghost">Ghost</Button>
+<Button variant="destructive">Destructive</Button>
+```
+
+**Button Sizes:**
+
+```tsx
+<Button size="sm">Small</Button>
+<Button size="default">Default</Button>
+<Button size="lg">Large</Button>
+```
+
+### Input
+
+Text input fields:
+
+```tsx
+import { Input } from '@repo/ui/components/input';
+
+<Input
+  type="email"
+  placeholder="Enter your email"
+  autoComplete="email"
+/>
+```
+
+### Field Components
+
+Form field wrapper with label and error handling:
+
+```tsx src/features/auth/components/sign-in.tsx
+import { Field, FieldError, FieldGroup, FieldLabel } from '@repo/ui/components/field';
+import { Input } from '@repo/ui/components/input';
+import { Controller } from 'react-hook-form';
+
+<Controller
+  name="email"
+  control={form.control}
+  render={({ field, fieldState }) => (
+    <Field data-invalid={fieldState.invalid} className="gap-2">
+      <FieldLabel htmlFor="email">Email</FieldLabel>
+      <Input
+        {...field}
+        id="email"
+        type="email"
+        aria-invalid={fieldState.invalid}
+        placeholder="Enter your email"
+        autoComplete="email"
+      />
+      {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+    </Field>
+  )}
+/>
+```
+
+**Field Components:**
+- `Field` - Container with automatic spacing
+- `FieldLabel` - Accessible label
+- `FieldGroup` - Group multiple fields
+- `FieldError` - Display validation errors
+
+### Card
+
+Card container with header, content, and footer:
+
+```tsx
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@repo/ui/components/card';
+
+<Card>
+  <CardHeader>
+    <CardTitle>Book Title</CardTitle>
+    <CardDescription>By Author Name</CardDescription>
+  </CardHeader>
+  <CardContent>
+    <p>Book description goes here...</p>
+  </CardContent>
+  <CardFooter>
+    <Button>Read More</Button>
+  </CardFooter>
+</Card>
+```
+
+### Select
+
+Dropdown select component:
+
+```tsx
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@repo/ui/components/select';
+
+<Select>
+  <SelectTrigger>
+    <SelectValue placeholder="Select a category" />
+  </SelectTrigger>
+  <SelectContent>
+    <SelectItem value="fiction">Fiction</SelectItem>
+    <SelectItem value="non-fiction">Non-Fiction</SelectItem>
+    <SelectItem value="biography">Biography</SelectItem>
+  </SelectContent>
+</Select>
+```
+
+### Badge
+
+Status badges:
+
+```tsx
+import { Badge } from '@repo/ui/components/badge';
+
+<Badge variant="default">Active</Badge>
+<Badge variant="secondary">Pending</Badge>
+<Badge variant="outline">Draft</Badge>
+<Badge variant="destructive">Deleted</Badge>
+```
+
+### Alert Dialog
+
+Modal confirmation dialogs:
+
+```tsx
+import { AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@repo/ui/components/alert-dialog';
+
+<AlertDialog>
+  <AlertDialogTrigger asChild>
+    <Button variant="destructive">Delete Book</Button>
+  </AlertDialogTrigger>
+  <AlertDialogContent>
+    <AlertDialogHeader>
+      <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+      <AlertDialogDescription>
+        This action cannot be undone. This will permanently delete the book.
+      </AlertDialogDescription>
+    </AlertDialogHeader>
+    <AlertDialogFooter>
+      <AlertDialogCancel>Cancel</AlertDialogCancel>
+      <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+    </AlertDialogFooter>
+  </AlertDialogContent>
+</AlertDialog>
+```
+
+### Dropdown Menu
+
+Context menus and dropdowns:
+
+```tsx
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@repo/ui/components/dropdown-menu';
+
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant="outline">Options</Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent>
+    <DropdownMenuItem>Edit</DropdownMenuItem>
+    <DropdownMenuItem>Duplicate</DropdownMenuItem>
+    <DropdownMenuSeparator />
+    <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+  </DropdownMenuContent>
+</DropdownMenu>
+```
+
+## Form Integration
+
+### With React Hook Form
+
+Complete form example:
+
+```tsx
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Button } from '@repo/ui/components/button';
+import { Field, FieldError, FieldGroup, FieldLabel } from '@repo/ui/components/field';
+import { Input } from '@repo/ui/components/input';
+import { Controller, useForm } from 'react-hook-form';
+import * as z from 'zod';
+
+const formSchema = z.object({
+  email: z.email('Please enter a valid email address.'),
+  password: z.string().min(8, 'Password must be at least 8 characters.'),
+});
+
+type FormData = z.infer<typeof formSchema>;
+
+function SignUpForm() {
+  const form = useForm<FormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { email: '', password: '' },
+  });
+
+  const onSubmit = async (data: FormData) => {
+    console.log(data);
+  };
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-6">
+      <FieldGroup className="gap-5">
+        <Controller
+          name="email"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid} className="gap-2">
+              <FieldLabel htmlFor="email">Email</FieldLabel>
+              <Input
+                {...field}
+                id="email"
+                type="email"
+                aria-invalid={fieldState.invalid}
+                placeholder="Enter your email"
+              />
+              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+            </Field>
+          )}
+        />
+
+        <Controller
+          name="password"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid} className="gap-2">
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <Input
+                {...field}
+                id="password"
+                type="password"
+                aria-invalid={fieldState.invalid}
+                placeholder="Enter your password"
+              />
+              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+            </Field>
+          )}
+        />
+      </FieldGroup>
+
+      <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
+        {form.formState.isSubmitting ? 'Submitting...' : 'Submit'}
+      </Button>
+    </form>
+  );
+}
+```
+
+## Styling
+
+Components use Tailwind CSS for styling:
+
+```tsx
+<Button className="w-full">Full Width Button</Button>
+<Input className="max-w-sm" />
+<Card className="hover:shadow-lg transition-shadow" />
+```
+
+<Tip>
+  All components accept a `className` prop for custom styling with Tailwind utilities.
+</Tip>
+
+## Accessibility
+
+Components follow accessibility best practices:
+
+- **ARIA attributes** - Proper `aria-*` attributes
+- **Keyboard navigation** - Full keyboard support
+- **Focus management** - Visible focus indicators
+- **Screen reader support** - Semantic HTML and labels
+
+```tsx
+<Input
+  aria-invalid={fieldState.invalid}
+  aria-describedby={fieldState.error ? 'email-error' : undefined}
+/>
+```
+
+## Toast Notifications
+
+Use Sonner for toast notifications:
+
+```tsx src/features/auth/hooks/use-sign-in.ts
+import { toast } from 'sonner';
+
+if (result.error) {
+  toast.error(result.error.message);
+  return null;
+}
+
+toast.success('Signed in');
+```
+
+**Toast Toaster Setup:**
+
+```tsx src/routes/__root.tsx
+import { Toaster } from 'sonner';
+
+export const Route = createRootRouteWithContext<AppRouterContext>()({
+  component: () => (
+    <>
+      <Outlet />
+      <Toaster position="top-center" richColors />
+    </>
+  ),
+});
+```
+
+## Adding New Components
+
+To add new Shadcn components:
+
+<Steps>
+  <Step title="Install the component">
+    ```bash
+    npx shadcn-ui@latest add [component-name]
+    ```
+  </Step>
+  
+  <Step title="Move to UI package">
+    Move the generated component to `packages/ui/src/components/`
+  </Step>
+  
+  <Step title="Export from package">
+    Export the component from `packages/ui/src/index.ts`
+  </Step>
+  
+  <Step title="Use in apps">
+    Import from `@repo/ui/components/[component-name]`
+  </Step>
+</Steps>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use semantic HTML">
+    Components render semantic HTML elements for better accessibility.
+  </Accordion>
+  
+  <Accordion title="Compose components">
+    Build complex UIs by composing simple components together.
+  </Accordion>
+  
+  <Accordion title="Leverage Tailwind">
+    Use Tailwind utilities for custom styling instead of CSS files.
+  </Accordion>
+  
+  <Accordion title="Handle loading states">
+    Disable buttons and show loading text during async operations.
+  </Accordion>
+  
+  <Accordion title="Validate accessibly">
+    Use `aria-invalid` and error messages for form validation.
+  </Accordion>
+</AccordionGroup>
+
+## Component Example
+
+Here's a complete example from the codebase:
+
+```tsx src/features/books/components/book-card.tsx
+import type { Book } from '../types';
+
+export const BookCard = ({ book }: { book: Book }) => {
+  return <div>{book.title}</div>;
+};
+```
+
+Expanded with UI components:
+
+```tsx
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@repo/ui/components/card';
+import { Button } from '@repo/ui/components/button';
+import { Badge } from '@repo/ui/components/badge';
+import type { Book } from '../types';
+
+export const BookCard = ({ book }: { book: Book }) => {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between">
+          <CardTitle>{book.title}</CardTitle>
+          <Badge variant="secondary">{book.category}</Badge>
+        </div>
+        <CardDescription>By {book.author}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-muted-foreground">{book.description}</p>
+      </CardContent>
+      <CardFooter>
+        <Button className="w-full">View Details</Button>
+      </CardFooter>
+    </Card>
+  );
+};
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Shadcn UI Docs" icon="book" href="https://ui.shadcn.com">
+    Explore all available components
+  </Card>
+  <Card title="Tailwind CSS" icon="palette" href="https://tailwindcss.com">
+    Learn about utility-first CSS
+  </Card>
+</CardGroup>

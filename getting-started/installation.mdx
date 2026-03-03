@@ -1,0 +1,169 @@
+---
+title: Installation
+description: Get Sunny Stack up and running on your local machine
+---
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+<Steps>
+  <Step title="Node.js">
+    Install Node.js version 18 or higher. You can download it from [nodejs.org](https://nodejs.org/) or use a version manager like [nvm](https://github.com/nvm-sh/nvm).
+    
+    ```bash
+    node --version  # Should be v18.0.0 or higher
+    ```
+  </Step>
+
+  <Step title="pnpm">
+    Sunny Stack uses pnpm 10.27.0 as its package manager for efficient monorepo management.
+    
+    ```bash
+    npm install -g pnpm@10.27.0
+    ```
+    
+    Verify the installation:
+    ```bash
+    pnpm --version  # Should output 10.27.0
+    ```
+  </Step>
+
+  <Step title="PostgreSQL">
+    You'll need PostgreSQL 17 for the database. The easiest way is using Docker (see database setup below), but you can also install it directly:
+    
+    - **macOS**: `brew install postgresql@17`
+    - **Ubuntu**: `sudo apt install postgresql-17`
+    - **Windows**: Download from [postgresql.org](https://www.postgresql.org/download/windows/)
+  </Step>
+
+  <Step title="Docker (Optional but Recommended)">
+    For running PostgreSQL in a container, install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+    
+    ```bash
+    docker --version
+    ```
+  </Step>
+</Steps>
+
+## Clone the Repository
+
+Clone the Sunny Stack repository to your local machine:
+
+```bash
+git clone <your-repo-url>
+cd sunny
+```
+
+## Install Dependencies
+
+Install all dependencies for the monorepo using pnpm:
+
+```bash
+pnpm install
+```
+
+This will install dependencies for:
+- The API application (`apps/api`)
+- The dashboard application (`apps/dashboard`)
+- All shared packages (`packages/config`, `packages/ui`)
+
+## Environment Setup
+
+Create environment files for your applications:
+
+### API Environment
+
+Create a `.env` file in `apps/api/`:
+
+```bash apps/api/.env
+DATABASE_URL="postgresql://user:password@localhost:5432/postgres"
+NODE_ENV="development"
+PORT=3001
+
+# Better Auth configuration
+BETTER_AUTH_SECRET="your-secret-key-here"
+BETTER_AUTH_URL="http://localhost:3001"
+```
+
+<Note>
+  Generate a secure random secret for `BETTER_AUTH_SECRET` using:
+  ```bash
+  openssl rand -base64 32
+  ```
+</Note>
+
+### Dashboard Environment
+
+Create a `.env` file in `apps/dashboard/`:
+
+```bash apps/dashboard/.env
+VITE_API_URL="http://localhost:3001"
+```
+
+## Database Setup
+
+Sunny Stack includes a Docker Compose configuration for running PostgreSQL:
+
+<Steps>
+  <Step title="Start PostgreSQL">
+    From the root directory, start the database container:
+    
+    ```bash
+    docker compose up -d
+    ```
+    
+    This will start PostgreSQL with the following configuration:
+    - **Host**: `localhost`
+    - **Port**: `5432`
+    - **Database**: `postgres`
+    - **User**: `user`
+    - **Password**: `password`
+  </Step>
+
+  <Step title="Verify Database Connection">
+    Check that the container is running:
+    
+    ```bash
+    docker compose ps
+    ```
+    
+    You should see the `sunny-postgres` container with status "Up".
+  </Step>
+
+  <Step title="Push Database Schema">
+    Initialize your database schema using Drizzle:
+    
+    ```bash
+    pnpm db:push
+    ```
+    
+    This runs `drizzle-kit push` to sync your schema with the database.
+  </Step>
+</Steps>
+
+<Warning>
+  The default credentials in `docker-compose.yml` are for development only. Never use these in production!
+</Warning>
+
+## Verify Installation
+
+Run the following commands to ensure everything is set up correctly:
+
+```bash
+# Check that all packages can be built
+pnpm build
+
+# Run type checking across the monorepo
+pnpm typecheck
+```
+
+If both commands complete without errors, your installation is successful!
+
+## Next Steps
+
+Now that you have Sunny Stack installed, you can:
+
+- Follow the [Quickstart Guide](/getting-started/quickstart) to start the development servers
+- Learn about the [Project Structure](/getting-started/project-structure)
+- Explore the [API Documentation](/api/trpc-setup)

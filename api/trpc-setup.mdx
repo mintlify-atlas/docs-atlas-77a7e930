@@ -1,0 +1,130 @@
+---
+title: tRPC Setup
+description: Initialize tRPC with context, transformers, and error formatting
+---
+
+## Overview
+
+Sunny Stack uses tRPC for type-safe API routes. The tRPC instance is configured with SuperJSON transformer and custom error formatting.
+
+**Source**: `apps/api/src/trpc/trpc.ts`
+
+## Initialization
+
+```typescript apps/api/src/trpc/trpc.ts
+import { initTRPC } from '@trpc/server';
+import superjson from 'superjson';
+import type { TrpcContext } from './context.factory';
+
+export const t = initTRPC.context<TrpcContext>().create({
+  transformer: superjson,
+  errorFormatter({ shape, error }) {
+    const cause = error.cause;
+
+    return {
+      ...shape,
+      data: {
+        ...shape.data,
+        
+        // Zod validation errors, inferred to client
+        zodError:
+          error.code === 'BAD_REQUEST' && cause instanceof ZodError 
+            ? z.flattenError(cause) 
+            : null,
+        
+        // Your app semantic errors, inferred to client
+        appCode: cause instanceof AppError ? cause.appCode : null,
+        field: cause instanceof AppError ? cause.field : null,
+      },
+    };
+  },
+});
+
+export const router = t.router;
+```
+
+## Context
+
+The tRPC context provides access to the database and authenticated user session.
+
+**Source**: `apps/api/src/trpc/context.factory.ts`
+
+### TrpcContext Type
+
+<ResponseField name="db" type="Database" required>
+  Drizzle database instance for querying tables
+</ResponseField>
+
+<ResponseField name="session" type="Session | null">
+  Better Auth session object if user is authenticated
+</ResponseField>
+
+<ResponseField name="user" type="User | null">
+  Better Auth user object if user is authenticated
+</ResponseField>
+
+### Context Factory
+
+The `TrpcContextFactory` creates context for each request:
+
+```typescript apps/api/src/trpc/context.factory.ts
+@Injectable()
+export class TrpcContextFactory {
+  constructor(
+    @Inject(DB_CONNECTION) private readonly db: Database,
+    private readonly authSessions: AuthSessionService,
+  ) {}
+
+  async create(req: Request): Promise<TrpcContext> {
+    const sessionResult = await this.authSessions.getSession(req);
+
+    return {
+      db: this.db,
+      session: sessionResult?.session ?? null,
+      user: sessionResult?.user ?? null,
+    };
+  }
+}
+```
+
+## Router Creation
+
+Create routers using the exported `router` function:
+
+```typescript
+import { router } from '@/trpc/trpc';
+
+export const booksRouter = router({
+  listPublic: publicProcedure.query(async ({ ctx }) => {
+    return ctx.db.select().from(bookTable);
+  }),
+});
+```
+
+## Transformer
+
+Sunny Stack uses [SuperJSON](https://github.com/blitz-js/superjson) to serialize:
+
+- Dates as `Date` objects (not strings)
+- `undefined` values
+- BigInt, Map, Set, RegExp
+
+This means you can return `Date` from your procedures and receive typed `Date` objects on the client.
+
+## Error Formatting
+
+The custom error formatter enriches tRPC errors with:
+
+<ResponseField name="zodError" type="ZodFormattedError | null">
+  Flattened Zod validation errors when input validation fails. Automatically inferred to the client.
+</ResponseField>
+
+<ResponseField name="appCode" type="AppErrorCode | null">
+  Application-specific error code (e.g., `BOOK_TITLE_TAKEN`). Inferred to the client for type-safe error handling.
+</ResponseField>
+
+<ResponseField name="field" type="string | null">
+  The field that caused the error (useful for form validation).
+</ResponseField>
+
+See [Error Handling](/api/error-handling) for how to throw and handle these errors.

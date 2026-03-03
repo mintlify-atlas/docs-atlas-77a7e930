@@ -1,0 +1,356 @@
+---
+title: TanStack Query
+description: Data fetching, caching, and state management with TanStack Query
+icon: database
+---
+
+## Overview
+
+[TanStack Query](https://tanstack.com/query) provides powerful data fetching and caching capabilities. It integrates seamlessly with TanStack Router and tRPC for type-safe data management.
+
+## Query Client Setup
+
+The query client is configured in `src/api/tanstack-query/query-client.ts`:
+
+```tsx src/api/tanstack-query/query-client.ts
+import { QueryClient } from '@tanstack/react-query';
+
+export const queryClient = new QueryClient(
+  // Optional options
+  {},
+);
+```
+
+The query client is provided at the application root:
+
+```tsx src/main.tsx
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '@/api/tanstack-query';
+
+root.render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  </StrictMode>,
+);
+```
+
+## Query Patterns
+
+### Query Options
+
+Define reusable query options:
+
+```tsx src/features/auth/api/queries.ts
+import { queryOptions } from '@tanstack/react-query';
+import { authClient } from '@/api/better-auth/client';
+
+// Query keys
+export const AUTH_QUERY_KEYS = {
+  all: ['auth'],
+  session: () => [...AUTH_QUERY_KEYS.all, 'session'],
+} as const;
+
+export const sessionQueryOptions = queryOptions({
+  queryKey: AUTH_QUERY_KEYS.session(),
+  queryFn: async () => {
+    const { data } = await authClient.getSession();
+    return data ?? null;
+  },
+  staleTime: 30_000, // 30 seconds
+});
+```
+
+<Info>
+  Query options provide type-safe, reusable query configurations that can be shared across your app.
+</Info>
+
+### Using Queries in Components
+
+Consume queries with the `useQuery` hook:
+
+```tsx src/features/books/page.tsx
+import { useQuery } from '@tanstack/react-query';
+import { booksQueryOptions } from './api/queries';
+import { BookCard } from './components/book-card';
+
+const BooksPage = () => {
+  const { data: books } = useQuery(booksQueryOptions());
+  
+  return (
+    <div>
+      {books?.map((book) => (
+        <BookCard key={book.id} book={book} />
+      ))}
+    </div>
+  );
+};
+```
+
+## Query Keys
+
+### Hierarchical Keys
+
+Organize query keys hierarchically:
+
+```tsx src/features/books/api/queries.ts
+export const BOOK_QUERY_KEYS = {
+  all: ['books'],
+  list: () => [...BOOK_QUERY_KEYS.all, 'list'],
+  detail: (id: string) => [...BOOK_QUERY_KEYS.all, 'detail', id],
+  search: (query: string) => [...BOOK_QUERY_KEYS.all, 'search', query],
+} as const;
+```
+
+<Tip>
+  Hierarchical keys enable efficient cache invalidation. For example, invalidating `['books']` invalidates all book-related queries.
+</Tip>
+
+### Query Key Best Practices
+
+<Steps>
+  <Step title="Use const assertions">
+    Add `as const` to query key objects for better type inference.
+  </Step>
+  
+  <Step title="Namespace by feature">
+    Prefix keys with the feature name (e.g., `['books', ...]`, `['auth', ...]`).
+  </Step>
+  
+  <Step title="Include all dependencies">
+    Add all query parameters to the key for proper caching.
+  </Step>
+</Steps>
+
+## tRPC Integration
+
+Combine TanStack Query with tRPC for type-safe API calls:
+
+```tsx src/features/books/api/queries.ts
+import { queryOptions } from '@tanstack/react-query';
+import { trpcClient } from '@/api/trpc';
+
+export const BOOK_QUERY_KEYS = {
+  all: ['books'],
+  list: () => [...BOOK_QUERY_KEYS.all, 'list'],
+} as const;
+
+export const booksQueryOptions = () =>
+  queryOptions({
+    queryKey: BOOK_QUERY_KEYS.list(),
+    queryFn: async () => {
+      const books = await trpcClient.books.listProtected.query();
+      return books;
+    },
+  });
+```
+
+## Router Integration
+
+### Preloading in Routes
+
+Preload data in route loaders:
+
+```tsx src/routes/_protected/books.tsx
+import { createFileRoute } from '@tanstack/react-router';
+import { booksQueryOptions } from '@/features/books/api/queries';
+
+export const Route = createFileRoute('/_protected/books')({
+  component: RouteComponent,
+  beforeLoad: async ({ context: { queryClient } }) => {
+    // Ensure data is loaded before rendering
+    await queryClient.ensureQueryData(booksQueryOptions());
+  },
+});
+```
+
+### Accessing Query Client in Routes
+
+The query client is available via router context:
+
+```tsx
+beforeLoad: async ({ context: { queryClient } }) => {
+  const session = await queryClient.ensureQueryData(sessionQueryOptions);
+  // ...
+}
+```
+
+## Cache Management
+
+### Refetching Queries
+
+Refetch queries after mutations:
+
+```tsx src/features/auth/hooks/use-sign-in.ts
+import { useQueryClient } from '@tanstack/react-query';
+import { useRouter } from '@tanstack/react-router';
+import { authClient } from '@/api/better-auth/client';
+import { sessionQueryOptions } from '../api/queries';
+
+export function useSignIn() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
+  return async function signIn(input: { email: string; password: string }) {
+    const result = await authClient.signIn.email({
+      email: input.email,
+      password: input.password,
+      rememberMe: true,
+    });
+
+    if (result.error) {
+      toast.error(result.error.message);
+      return null;
+    }
+
+    // Refresh cached session, then re-run route guards/loaders
+    await queryClient.refetchQueries({ queryKey: sessionQueryOptions.queryKey });
+    await router.invalidate();
+
+    return result;
+  };
+}
+```
+
+### Invalidating Queries
+
+Invalidate queries to mark them as stale:
+
+```tsx
+// Invalidate all book queries
+queryClient.invalidateQueries({ queryKey: BOOK_QUERY_KEYS.all });
+
+// Invalidate specific book query
+queryClient.invalidateQueries({ queryKey: BOOK_QUERY_KEYS.detail(id) });
+```
+
+## Query States
+
+### Loading States
+
+Handle loading and error states:
+
+```tsx
+const { data, isLoading, isError, error } = useQuery(booksQueryOptions());
+
+if (isLoading) {
+  return <div>Loading books...</div>;
+}
+
+if (isError) {
+  return <div>Error: {error.message}</div>;
+}
+
+return <BookList books={data} />;
+```
+
+### Background Refetching
+
+Queries refetch automatically in the background:
+
+```tsx
+const { data, isRefetching, isLoading } = useQuery(booksQueryOptions());
+
+// isLoading: true during initial load
+// isRefetching: true during background refetch
+```
+
+## Stale Time Configuration
+
+Configure how long data stays fresh:
+
+```tsx
+export const sessionQueryOptions = queryOptions({
+  queryKey: AUTH_QUERY_KEYS.session(),
+  queryFn: async () => {
+    const { data } = await authClient.getSession();
+    return data ?? null;
+  },
+  staleTime: 30_000, // Fresh for 30 seconds
+});
+```
+
+<Note>
+  Set `staleTime` based on how often your data changes. Frequently changing data should have lower stale times.
+</Note>
+
+## Mutations (Future)
+
+While not shown in the current codebase, TanStack Query also supports mutations:
+
+```tsx
+import { useMutation } from '@tanstack/react-query';
+
+const createBookMutation = useMutation({
+  mutationFn: (book: NewBook) => trpcClient.books.create.mutate(book),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: BOOK_QUERY_KEYS.list() });
+  },
+});
+```
+
+## Dev Tools
+
+TanStack Query Devtools are integrated in the root layout:
+
+```tsx src/routes/__root.tsx
+import { ReactQueryDevtoolsPanel } from '@tanstack/react-query-devtools';
+import { TanStackDevtools } from '@tanstack/react-devtools';
+
+export const Route = createRootRouteWithContext<AppRouterContext>()({
+  component: () => (
+    <>
+      <Outlet />
+      <TanStackDevtools
+        config={{ position: 'bottom-right' }}
+        plugins={[
+          {
+            name: 'Tanstack Query',
+            render: <ReactQueryDevtoolsPanel />,
+          },
+        ]}
+      />
+    </>
+  ),
+});
+```
+
+<Tip>
+  Open the dev tools to inspect query states, cache contents, and refetch timing.
+</Tip>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Define query options separately">
+    Create reusable `queryOptions` objects in feature API modules for consistency and type safety.
+  </Accordion>
+  
+  <Accordion title="Use hierarchical query keys">
+    Organize keys by feature and operation for efficient invalidation.
+  </Accordion>
+  
+  <Accordion title="Preload in route loaders">
+    Use `ensureQueryData` in `beforeLoad` to fetch data before rendering.
+  </Accordion>
+  
+  <Accordion title="Configure stale time appropriately">
+    Balance freshness with performance based on your data update frequency.
+  </Accordion>
+  
+  <Accordion title="Refetch after mutations">
+    Always refetch or invalidate affected queries after data changes.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="tRPC Client" icon="plug" href="/frontend/trpc-client">
+    Learn how to make type-safe API calls
+  </Card>
+  <Card title="TanStack Router" icon="route" href="/frontend/tanstack-router">
+    Understand route-level data loading
+  </Card>
+</CardGroup>

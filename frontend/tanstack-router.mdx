@@ -1,0 +1,337 @@
+---
+title: TanStack Router
+description: File-based routing with type-safe navigation and data loading
+icon: route
+---
+
+## Overview
+
+Sunny Stack uses [TanStack Router](https://tanstack.com/router) for file-based routing with full TypeScript support. Routes are defined in the `src/routes/` directory and automatically type-checked.
+
+## Router Configuration
+
+The router is configured in `src/main.tsx`:
+
+```tsx src/main.tsx
+import { createRouter, RouterProvider } from '@tanstack/react-router';
+import { routeTree } from './routeTree.gen';
+
+const router = createRouter({
+  routeTree,
+  context: {
+    queryClient,
+    trpcClient,
+  },
+  defaultPreload: 'intent',        // Preload on hover/focus
+  scrollRestoration: true,          // Restore scroll position
+  defaultStructuralSharing: true,   // Share data structures
+  defaultPreloadStaleTime: 0,       // Always preload fresh
+});
+
+// Register for type safety
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
+  }
+}
+```
+
+<Note>
+  The `routeTree.gen.ts` file is automatically generated from your route files. Never edit it manually.
+</Note>
+
+## File-Based Routing
+
+### Route Files
+
+Routes are defined using the `createFileRoute` function:
+
+```tsx src/routes/_protected/books.tsx
+import { createFileRoute } from '@tanstack/react-router';
+import { booksQueryOptions } from '@/features/books/api/queries';
+import BooksPage from '@/features/books/page';
+
+export const Route = createFileRoute('/_protected/books')({
+  component: RouteComponent,
+  beforeLoad: async ({ context: { queryClient } }) => {
+    await queryClient.ensureQueryData(booksQueryOptions());
+  },
+});
+
+function RouteComponent() {
+  return <BooksPage />;
+}
+```
+
+### File Naming Convention
+
+| File Pattern | Route Path | Description |
+|-------------|------------|-------------|
+| `index.tsx` | `/` | Index route |
+| `about.tsx` | `/about` | Static route |
+| `_auth/sign-in.tsx` | `/sign-in` | Grouped route (layout) |
+| `_protected/books.tsx` | `/books` | Protected route |
+| `route.tsx` | N/A | Layout component only |
+
+<Info>
+  Routes prefixed with `_` create layout groups without adding to the URL path.
+</Info>
+
+## Root Layout
+
+The root route provides the base layout and context:
+
+```tsx src/routes/__root.tsx
+import { createRootRouteWithContext, Outlet } from '@tanstack/react-router';
+import type { QueryClient } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
+import type { trpcClient } from '@/api/trpc';
+
+export interface AppRouterContext {
+  queryClient: QueryClient;
+  trpcClient: typeof trpcClient;
+}
+
+export const Route = createRootRouteWithContext<AppRouterContext>()({
+  component: () => (
+    <>
+      <Outlet />
+      <Toaster position="top-center" richColors />
+      {/* Dev tools */}
+    </>
+  ),
+});
+```
+
+## Layout Routes
+
+### Protected Routes Layout
+
+Protected routes require authentication:
+
+```tsx src/routes/_protected/route.tsx
+import { createFileRoute, Outlet, redirect } from '@tanstack/react-router';
+import { sessionQueryOptions } from '@/features/auth/api/queries';
+
+export const Route = createFileRoute('/_protected')({
+  component: RouteComponent,
+  beforeLoad: async ({ context: { queryClient } }) => {
+    const session = await queryClient.ensureQueryData(sessionQueryOptions);
+    if (!session) {
+      throw redirect({ to: '/sign-in', search: { redirect: location.href } });
+    }
+    return { session };
+  },
+});
+
+function RouteComponent() {
+  return <Outlet />;
+}
+```
+
+### Auth Routes Layout
+
+Auth routes redirect authenticated users:
+
+```tsx src/routes/_auth/route.tsx
+import { createFileRoute, Outlet, redirect } from '@tanstack/react-router';
+import { z } from 'zod';
+import { sessionQueryOptions } from '@/features/auth/api/queries';
+
+export const Route = createFileRoute('/_auth')({
+  component: RouteComponent,
+  validateSearch: z.object({
+    redirect: z.string().optional().catch(''),
+  }),
+  beforeLoad: async ({ context: { queryClient }, search }) => {
+    const session = await queryClient.ensureQueryData(sessionQueryOptions);
+    if (session) {
+      throw redirect({ to: search.redirect || '/' });
+    }
+  },
+});
+
+function RouteComponent() {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center overflow-hidden bg-[#FBFAF9]">
+      <div className="w-full max-w-sm rounded-xl border border-neutral-200 bg-white p-8 shadow-xs">
+        <Outlet />
+      </div>
+    </div>
+  );
+}
+```
+
+## Route Features
+
+### Data Loading
+
+Use `beforeLoad` to fetch data before rendering:
+
+```tsx
+export const Route = createFileRoute('/_protected/books')({
+  beforeLoad: async ({ context: { queryClient } }) => {
+    // Pre-fetch data
+    await queryClient.ensureQueryData(booksQueryOptions());
+  },
+});
+```
+
+### Search Params Validation
+
+Validate search parameters with Zod:
+
+```tsx
+export const Route = createFileRoute('/_auth')({
+  validateSearch: z.object({
+    redirect: z.string().optional().catch(''),
+  }),
+});
+```
+
+### Route Context
+
+Access route context in components:
+
+```tsx src/routes/_protected/index.tsx
+function RouteComponent() {
+  const { session } = Route.useRouteContext(); // From layout route
+  return (
+    <div>
+      userId: {session.user.id}
+      <br />
+      sessionId: {session.session.id}
+    </div>
+  );
+}
+```
+
+## Navigation
+
+### Type-Safe Links
+
+Use the `Link` component for navigation:
+
+```tsx
+import { Link } from '@tanstack/react-router';
+
+<Link to="/books" search={{ filter: 'fiction' }}>
+  View Books
+</Link>
+```
+
+### Programmatic Navigation
+
+Use the `useNavigate` hook:
+
+```tsx
+import { useNavigate } from '@tanstack/react-router';
+
+const navigate = useNavigate();
+
+await navigate({ to: '/books', search: { page: 1 } });
+```
+
+### Router Invalidation
+
+Invalidate routes to re-run loaders:
+
+```tsx src/features/auth/hooks/use-sign-in.ts
+import { useRouter } from '@tanstack/react-router';
+
+const router = useRouter();
+
+// Refresh cached session, then re-run route guards/loaders
+await queryClient.refetchQueries({ queryKey: sessionQueryOptions.queryKey });
+await router.invalidate();
+```
+
+## Advanced Patterns
+
+### Redirects
+
+Throw redirects in `beforeLoad`:
+
+```tsx
+beforeLoad: async ({ context: { queryClient } }) => {
+  const session = await queryClient.ensureQueryData(sessionQueryOptions);
+  if (!session) {
+    throw redirect({ to: '/sign-in', search: { redirect: location.href } });
+  }
+}
+```
+
+### Preloading
+
+Routes preload on hover/focus by default:
+
+```tsx
+const router = createRouter({
+  defaultPreload: 'intent', // Preload on hover/focus
+});
+```
+
+### Search Params
+
+Access validated search params:
+
+```tsx
+const SignIn = () => {
+  const { redirect } = AuthRoute.useSearch();
+  // redirect is typed and validated
+};
+```
+
+## Route Loading States
+
+Handle loading states in your components:
+
+```tsx
+import { useQuery } from '@tanstack/react-query';
+import { booksQueryOptions } from './api/queries';
+
+const BooksPage = () => {
+  const { data: books, isLoading } = useQuery(booksQueryOptions());
+  
+  if (isLoading) return <div>Loading...</div>;
+  
+  return (
+    <div>
+      {books?.map((book) => (
+        <BookCard key={book.id} book={book} />
+      ))}
+    </div>
+  );
+};
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Organize routes by feature">
+    Use layout groups (`_auth`, `_protected`) to group related routes and share logic.
+  </Accordion>
+  
+  <Accordion title="Preload data in beforeLoad">
+    Use `beforeLoad` with `queryClient.ensureQueryData()` to fetch data before rendering.
+  </Accordion>
+  
+  <Accordion title="Use type-safe navigation">
+    Leverage TypeScript for compile-time validation of routes and params.
+  </Accordion>
+  
+  <Accordion title="Invalidate routes after mutations">
+    Call `router.invalidate()` after data changes to re-run loaders.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="TanStack Query" icon="database" href="/frontend/tanstack-query">
+    Learn how to fetch and cache data
+  </Card>
+  <Card title="Authentication" icon="shield" href="/frontend/authentication">
+    Implement protected routes
+  </Card>
+</CardGroup>

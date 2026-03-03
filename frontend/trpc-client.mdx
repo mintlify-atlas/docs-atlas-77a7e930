@@ -1,0 +1,405 @@
+---
+title: tRPC Client
+description: Type-safe API calls with tRPC client configuration and usage
+icon: plug
+---
+
+## Overview
+
+The tRPC client provides end-to-end type safety for API calls. It automatically infers types from your backend router, eliminating the need for manual API contracts.
+
+## Client Configuration
+
+The tRPC client is configured in `src/api/trpc/index.ts`:
+
+```tsx src/api/trpc/index.ts
+import { createTRPCClient, httpBatchLink } from '@trpc/client';
+import superjson from 'superjson';
+import type { AppRouter } from '../../../../api/src/trpc/public';
+
+export const trpcClient = createTRPCClient<AppRouter>({
+  links: [
+    httpBatchLink({
+      url: 'http://localhost:8000/trpc',
+      transformer: superjson, // matches server-side transformer
+      fetch(url, options) {
+        return fetch(url, { ...options, credentials: 'include' });
+      },
+    }),
+  ],
+});
+```
+
+<Info>
+  The `AppRouter` type is imported from the backend, providing automatic type inference for all API calls.
+</Info>
+
+### Configuration Options
+
+| Option | Value | Purpose |
+|--------|-------|----------|
+| `url` | `http://localhost:8000/trpc` | Backend tRPC endpoint |
+| `transformer` | `superjson` | Serialize/deserialize complex types (Date, Map, etc.) |
+| `credentials` | `include` | Send cookies with requests for auth |
+
+<Warning>
+  The `transformer` must match the backend configuration. Using `superjson` allows you to send and receive Date objects, Sets, Maps, and more.
+</Warning>
+
+## Router Context
+
+The tRPC client is available via router context:
+
+```tsx src/main.tsx
+const router = createRouter({
+  routeTree,
+  context: {
+    queryClient,
+    trpcClient, // Available in all routes
+  },
+});
+```
+
+Access it in route loaders:
+
+```tsx
+beforeLoad: async ({ context: { trpcClient } }) => {
+  const data = await trpcClient.books.list.query();
+  // ...
+}
+```
+
+## Type Inference
+
+### Router Types
+
+Infer input and output types from your router:
+
+```tsx src/api/trpc/types.ts
+import type { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
+import type { AppRouter } from '../../../../api/src/trpc/public';
+
+export type RouterInputs = inferRouterInputs<AppRouter>;
+export type RouterOutputs = inferRouterOutputs<AppRouter>;
+```
+
+Use these types in your application:
+
+```tsx
+import type { RouterOutputs } from '@/api/trpc/types';
+
+// Infer book type from API
+type Book = RouterOutputs['books']['listProtected'][number];
+
+interface BookCardProps {
+  book: Book;
+}
+```
+
+## Usage Patterns
+
+### With TanStack Query
+
+Combine tRPC with TanStack Query for data fetching:
+
+```tsx src/features/books/api/queries.ts
+import { queryOptions } from '@tanstack/react-query';
+import { trpcClient } from '@/api/trpc';
+
+export const BOOK_QUERY_KEYS = {
+  all: ['books'],
+  list: () => [...BOOK_QUERY_KEYS.all, 'list'],
+} as const;
+
+export const booksQueryOptions = () =>
+  queryOptions({
+    queryKey: BOOK_QUERY_KEYS.list(),
+    queryFn: async () => {
+      const books = await trpcClient.books.listProtected.query();
+      return books;
+    },
+  });
+```
+
+Then use in components:
+
+```tsx src/features/books/page.tsx
+import { useQuery } from '@tanstack/react-query';
+import { booksQueryOptions } from './api/queries';
+
+const BooksPage = () => {
+  const { data: books } = useQuery(booksQueryOptions());
+  // books is fully typed!
+  return (
+    <div>
+      {books?.map((book) => (
+        <BookCard key={book.id} book={book} />
+      ))}
+    </div>
+  );
+};
+```
+
+### Queries vs Mutations
+
+tRPC procedures come in two types:
+
+```tsx
+// Queries (GET requests, no side effects)
+await trpcClient.books.list.query();
+await trpcClient.books.getById.query({ id: '123' });
+
+// Mutations (POST requests, side effects)
+await trpcClient.books.create.mutate({ title: 'New Book' });
+await trpcClient.books.delete.mutate({ id: '123' });
+```
+
+<Tip>
+  Use `.query()` for data fetching and `.mutate()` for data modifications.
+</Tip>
+
+## Error Handling
+
+### Type-Safe Error Handling
+
+Handle tRPC errors with type safety:
+
+```tsx src/api/trpc/error.ts
+import { TRPCClientError } from '@trpc/client';
+import type { AppRouter } from '../../../../api/src/trpc/public';
+
+export function isTRPCClientError(cause: unknown): cause is TRPCClientError<AppRouter> {
+  return cause instanceof TRPCClientError;
+}
+```
+
+### Form Error Integration
+
+Apply tRPC errors to React Hook Form:
+
+```tsx src/api/trpc/error.ts
+import type { FieldValues, Path, UseFormReturn } from 'react-hook-form';
+
+type ZodFlatten = {
+  fieldErrors: Record<string, Array<string>>;
+  formErrors: Array<string>;
+};
+
+export function applyTrpcErrorToForm<TValues extends FieldValues>(
+  cause: unknown,
+  form: UseFormReturn<TValues>,
+) {
+  if (!isTRPCClientError(cause)) {
+    form.setError('root' as Path<TValues>, { 
+      type: 'server', 
+      message: 'Something went wrong.' 
+    });
+    return;
+  }
+
+  // 1) Zod validation errors (input validation)
+  const zodError = cause.data?.zodError as ZodFlatten | null | undefined;
+  if (zodError?.fieldErrors) {
+    for (const [field, messages] of Object.entries(zodError.fieldErrors)) {
+      const message = messages[0];
+      if (!message) continue;
+      form.setError(field as Path<TValues>, { type: 'server', message });
+    }
+    return;
+  }
+
+  // 2) App semantic errors (business logic)
+  const appCode = cause.data?.appCode;
+  const field = cause.data?.field;
+
+  if (appCode && field) {
+    form.setError(field as Path<TValues>, { type: 'server', message: cause.message });
+    return;
+  }
+
+  // 3) Everything else
+  form.setError('root' as Path<TValues>, { type: 'server', message: cause.message });
+}
+```
+
+Use in form submissions:
+
+```tsx
+const onSubmit = async (data: FormData) => {
+  try {
+    await trpcClient.books.create.mutate(data);
+    toast.success('Book created!');
+  } catch (error) {
+    applyTrpcErrorToForm(error, form);
+  }
+};
+```
+
+## HTTP Batching
+
+The tRPC client uses HTTP batching to combine multiple requests:
+
+```tsx
+// These requests are batched into a single HTTP call
+const [books, authors, categories] = await Promise.all([
+  trpcClient.books.list.query(),
+  trpcClient.authors.list.query(),
+  trpcClient.categories.list.query(),
+]);
+```
+
+<Info>
+  HTTP batching reduces network overhead by combining multiple requests into one. This is especially useful when loading data for a page.
+</Info>
+
+## Request Authentication
+
+The client includes credentials (cookies) with every request:
+
+```tsx
+fetch(url, options) {
+  return fetch(url, { ...options, credentials: 'include' });
+}
+```
+
+This allows the backend to:
+- Authenticate requests using session cookies
+- Access the current user context
+- Enforce authorization rules
+
+## SuperJSON Transformer
+
+### Supported Types
+
+SuperJSON allows you to send and receive complex types:
+
+```tsx
+// These types work seamlessly
+const data = await trpcClient.events.create.mutate({
+  title: 'Meeting',
+  startDate: new Date(), // Date objects work!
+  attendees: new Set(['alice', 'bob']), // Sets work!
+  metadata: new Map([['key', 'value']]), // Maps work!
+});
+```
+
+### Why SuperJSON?
+
+Without SuperJSON, complex types become strings:
+
+```tsx
+// Without SuperJSON
+{ createdAt: "2024-03-03T10:00:00.000Z" } // string!
+
+// With SuperJSON
+{ createdAt: Date } // actual Date object!
+```
+
+<Warning>
+  Always ensure the backend uses the same transformer (SuperJSON) for consistency.
+</Warning>
+
+## Usage Example
+
+Here's a complete example of using the tRPC client:
+
+```tsx src/features/books/api/queries.ts
+import { queryOptions } from '@tanstack/react-query';
+import { trpcClient } from '@/api/trpc';
+import type { RouterOutputs } from '@/api/trpc/types';
+
+// Infer types from API
+export type Book = RouterOutputs['books']['listProtected'][number];
+
+// Query keys
+export const BOOK_QUERY_KEYS = {
+  all: ['books'],
+  list: () => [...BOOK_QUERY_KEYS.all, 'list'],
+} as const;
+
+// Query options
+export const booksQueryOptions = () =>
+  queryOptions({
+    queryKey: BOOK_QUERY_KEYS.list(),
+    queryFn: async () => {
+      const books = await trpcClient.books.listProtected.query();
+      return books;
+    },
+  });
+```
+
+```tsx src/features/books/page.tsx
+import { useQuery } from '@tanstack/react-query';
+import { booksQueryOptions } from './api/queries';
+import { BookCard } from './components/book-card';
+import type { Book } from './types';
+
+const BooksPage = () => {
+  const { data: books } = useQuery(booksQueryOptions());
+  
+  return (
+    <div>
+      {books?.map((book: Book) => (
+        <BookCard key={book.id} book={book} />
+      ))}
+    </div>
+  );
+};
+
+export default BooksPage;
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always use with TanStack Query">
+    Combine tRPC with TanStack Query for caching, refetching, and optimistic updates.
+  </Accordion>
+  
+  <Accordion title="Infer types from router">
+    Use `RouterInputs` and `RouterOutputs` to infer types instead of duplicating them.
+  </Accordion>
+  
+  <Accordion title="Handle errors gracefully">
+    Use `isTRPCClientError` and `applyTrpcErrorToForm` for consistent error handling.
+  </Accordion>
+  
+  <Accordion title="Leverage HTTP batching">
+    Make multiple parallel requests to benefit from automatic batching.
+  </Accordion>
+  
+  <Accordion title="Match transformers">
+    Ensure frontend and backend use the same transformer (SuperJSON).
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Type errors from AppRouter">
+    Ensure the backend is built and the `AppRouter` type is exported from `api/src/trpc/public`.
+  </Accordion>
+  
+  <Accordion title="Credentials not sent">
+    Verify `credentials: 'include'` is set in the fetch options.
+  </Accordion>
+  
+  <Accordion title="Date objects become strings">
+    Check that both client and server use `superjson` transformer.
+  </Accordion>
+  
+  <Accordion title="CORS errors">
+    Ensure the backend CORS configuration allows credentials from your frontend origin.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="TanStack Query" icon="database" href="/frontend/tanstack-query">
+    Combine tRPC with query caching
+  </Card>
+  <Card title="Backend tRPC" icon="server" href="/backend/trpc">
+    Learn how to build tRPC routers
+  </Card>
+</CardGroup>

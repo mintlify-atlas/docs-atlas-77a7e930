@@ -1,0 +1,471 @@
+---
+title: Drizzle ORM Setup
+description: How to use Drizzle ORM for type-safe database operations in Sunny Stack
+---
+
+## Overview
+
+Sunny Stack uses **Drizzle ORM** with PostgreSQL for database operations. Drizzle provides excellent TypeScript support, automatic migrations, and a familiar SQL-like syntax.
+
+## Database Module
+
+The database is configured as a global NestJS module:
+
+```ts core/database/database.module.ts
+import { Global, Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { DB_CONNECTION } from './database.constants';
+import * as schema from './schema';
+
+@Global() // Makes this module available globally without importing
+@Module({
+  providers: [
+    {
+      provide: DB_CONNECTION,
+      inject: [ConfigService],
+      useFactory(configService: ConfigService) {
+        return drizzle({
+          connection: configService.getOrThrow<string>('DATABASE_URL'),
+          casing: 'snake_case',
+          schema,
+        });
+      },
+    },
+  ],
+  exports: [DB_CONNECTION],
+})
+export class DatabaseModule {}
+```
+
+### Key Features
+
+<AccordionGroup>
+  <Accordion title="@Global() decorator">
+    The database module is global, so you don't need to import it in every module. Just inject `DB_CONNECTION` anywhere.
+  </Accordion>
+  <Accordion title="Factory pattern">
+    Uses `useFactory` to create the Drizzle instance with environment-based configuration.
+  </Accordion>
+  <Accordion title="snake_case casing">
+    Automatically converts `camelCase` TypeScript fields to `snake_case` database columns.
+  </Accordion>
+  <Accordion title="Schema import">
+    All tables are imported as a single schema object for type inference.
+  </Accordion>
+</AccordionGroup>
+
+## Database Constants
+
+The connection token and type are defined in `database.constants.ts`:
+
+```ts core/database/database.constants.ts
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from './schema';
+
+export const DB_CONNECTION = Symbol('DB_CONNECTION');
+export type Database = NodePgDatabase<typeof schema>;
+```
+
+<Note>
+  Using a `Symbol` for the injection token prevents naming collisions and improves type safety.
+</Note>
+
+## Defining Tables
+
+Tables are defined in `core/database/schema/`:
+
+```ts core/database/schema/book.ts
+import { pgTable, text, unique } from 'drizzle-orm/pg-core';
+import { createdAt, randomPrimaryUUID } from '../utils';
+
+export const bookTable = pgTable(
+  'book',
+  {
+    id: randomPrimaryUUID(),
+    title: text().notNull(),
+    publishedAt: createdAt(),
+  },
+  (t) => [unique().on(t.title)],
+);
+```
+
+### Schema Utilities
+
+Common column patterns are defined in `utils.ts`:
+
+```ts core/database/utils.ts
+import { timestamp, uuid } from 'drizzle-orm/pg-core';
+
+export const randomPrimaryUUID = () => uuid().primaryKey().defaultRandom();
+
+export const createdAt = () => timestamp({ withTimezone: true }).notNull().defaultNow();
+
+export const updatedAt = () =>
+  timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date());
+```
+
+### Using Utilities
+
+<CodeGroup>
+```ts Primary Key
+id: randomPrimaryUUID()
+// Generates: id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+```
+
+```ts Created Timestamp
+createdAt: createdAt()
+// Generates: created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+```
+
+```ts Updated Timestamp
+updatedAt: updatedAt()
+// Generates: updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+// Automatically updates on every change
+```
+</CodeGroup>
+
+## Schema Index
+
+All tables must be exported from `schema/index.ts`:
+
+```ts core/database/schema/index.ts
+export * from './better-auth';
+export * from './book';
+```
+
+<Warning>
+  If you add a new table file, you MUST export it from `schema/index.ts` or it won't be included in migrations.
+</Warning>
+
+## Injecting Database
+
+Inject the database in any service or factory:
+
+### In NestJS Services
+
+```ts
+import { Inject, Injectable } from '@nestjs/common';
+import { type Database, DB_CONNECTION } from '@/core/database/database.constants';
+import { bookTable } from '@/core/database/schema';
+
+@Injectable()
+export class BooksService {
+  constructor(@Inject(DB_CONNECTION) private readonly db: Database) {}
+
+  getBooks() {
+    return this.db.select().from(bookTable);
+  }
+}
+```
+
+### In tRPC Context
+
+The database is automatically available in all tRPC procedures:
+
+```ts
+publicProcedure.query(async ({ ctx }) => {
+  return ctx.db.select().from(bookTable);
+});
+```
+
+## Common Operations
+
+### Select
+
+<CodeGroup>
+```ts All Columns
+const books = await db.select().from(bookTable);
+```
+
+```ts Specific Columns
+const books = await db.select({
+  id: bookTable.id,
+  title: bookTable.title,
+}).from(bookTable);
+```
+
+```ts With Where
+import { eq } from 'drizzle-orm';
+
+const book = await db
+  .select()
+  .from(bookTable)
+  .where(eq(bookTable.id, bookId));
+```
+
+```ts With Order
+import { desc } from 'drizzle-orm';
+
+const books = await db
+  .select()
+  .from(bookTable)
+  .orderBy(desc(bookTable.publishedAt));
+```
+</CodeGroup>
+
+### Insert
+
+<CodeGroup>
+```ts Single Row
+const [book] = await db
+  .insert(bookTable)
+  .values({ title: 'The Great Gatsby', publishedAt: new Date() })
+  .returning();
+```
+
+```ts Multiple Rows
+const books = await db
+  .insert(bookTable)
+  .values([
+    { title: 'Book 1', publishedAt: new Date() },
+    { title: 'Book 2', publishedAt: new Date() },
+  ])
+  .returning();
+```
+</CodeGroup>
+
+<Note>
+  Always use `.returning()` to get the inserted row(s) with generated IDs and defaults.
+</Note>
+
+### Update
+
+<CodeGroup>
+```ts Update Single Row
+import { eq } from 'drizzle-orm';
+
+const [updated] = await db
+  .update(bookTable)
+  .set({ title: 'New Title' })
+  .where(eq(bookTable.id, bookId))
+  .returning();
+```
+
+```ts Update Multiple Rows
+import { eq } from 'drizzle-orm';
+
+await db
+  .update(bookTable)
+  .set({ publishedAt: new Date() })
+  .where(eq(bookTable.userId, userId));
+```
+</CodeGroup>
+
+### Delete
+
+```ts
+import { eq } from 'drizzle-orm';
+
+await db.delete(bookTable).where(eq(bookTable.id, bookId));
+```
+
+## Relationships
+
+Define relationships using foreign keys:
+
+```ts
+import { pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
+import { randomPrimaryUUID } from '../utils';
+import { userTable } from './user';
+
+export const bookTable = pgTable('book', {
+  id: randomPrimaryUUID(),
+  title: text().notNull(),
+  authorId: uuid('author_id').notNull().references(() => userTable.id),
+});
+
+// Define relations
+export const bookRelations = relations(bookTable, ({ one }) => ({
+  author: one(userTable, {
+    fields: [bookTable.authorId],
+    references: [userTable.id],
+  }),
+}));
+```
+
+### Querying Relations
+
+```ts
+import { eq } from 'drizzle-orm';
+
+const booksWithAuthors = await db.query.bookTable.findMany({
+  with: {
+    author: true,
+  },
+});
+
+// Or specific book
+const book = await db.query.bookTable.findFirst({
+  where: eq(bookTable.id, bookId),
+  with: {
+    author: true,
+  },
+});
+```
+
+## Error Handling
+
+Drizzle throws database-specific errors. Sunny Stack includes a helper to check error types:
+
+```ts core/database/error.ts
+import { DatabaseError } from 'pg';
+
+export type DbErrorCode = 'UNIQUE_CONSTRAINT' | 'FOREIGN_KEY_CONSTRAINT' | 'NOT_NULL_CONSTRAINT';
+
+const errorCodes: Record<DbErrorCode, string> = {
+  UNIQUE_CONSTRAINT: '23505',
+  FOREIGN_KEY_CONSTRAINT: '23503',
+  NOT_NULL_CONSTRAINT: '23502',
+};
+
+export function isDbError(error: unknown, code: DbErrorCode): boolean {
+  return error instanceof DatabaseError && error.code === errorCodes[code];
+}
+```
+
+### Usage in tRPC
+
+```ts
+import { isDbError } from '@/core/database';
+import { throwAppError } from '@/trpc/error';
+
+try {
+  const [book] = await ctx.db
+    .insert(bookTable)
+    .values({ title: input.title })
+    .returning();
+  return book;
+} catch (error) {
+  if (isDbError(error, 'UNIQUE_CONSTRAINT')) {
+    throwAppError({
+      trpcCode: 'BAD_REQUEST',
+      appCode: 'BOOK_TITLE_TAKEN',
+      message: 'Book title already taken',
+      field: 'title',
+    });
+  }
+  throw error;
+}
+```
+
+## Transactions
+
+Wrap multiple operations in a transaction:
+
+```ts
+await db.transaction(async (tx) => {
+  const [book] = await tx
+    .insert(bookTable)
+    .values({ title: input.title })
+    .returning();
+
+  await tx.insert(auditLogTable).values({
+    action: 'BOOK_CREATED',
+    bookId: book.id,
+  });
+
+  return book;
+});
+```
+
+<Warning>
+  If any operation in the transaction throws, all changes are rolled back.
+</Warning>
+
+## Migrations
+
+Drizzle uses a CLI for migrations:
+
+```bash
+# Generate migration from schema changes
+npx drizzle-kit generate
+
+# Apply migrations to database
+npx drizzle-kit migrate
+
+# Open Drizzle Studio (database GUI)
+npx drizzle-kit studio
+```
+
+### Migration Workflow
+
+<Steps>
+  <Step title="Modify schema">
+    Add/change tables in `core/database/schema/`
+  </Step>
+  <Step title="Generate migration">
+    Run `npx drizzle-kit generate` to create migration file
+  </Step>
+  <Step title="Review migration">
+    Check the generated SQL in `drizzle/migrations/`
+  </Step>
+  <Step title="Apply migration">
+    Run `npx drizzle-kit migrate` to apply to database
+  </Step>
+</Steps>
+
+## Drizzle Studio
+
+Drizzle Studio is a GUI for browsing and editing your database:
+
+```bash
+npx drizzle-kit studio
+```
+
+This opens a local web interface at `https://local.drizzle.studio`.
+
+## Type Inference
+
+Drizzle automatically infers TypeScript types from your schema:
+
+```ts
+import { InferSelectModel, InferInsertModel } from 'drizzle-orm';
+import { bookTable } from '@/core/database/schema';
+
+// Type for selected rows
+type Book = InferSelectModel<typeof bookTable>;
+// { id: string; title: string; publishedAt: Date }
+
+// Type for inserts (excludes generated fields)
+type NewBook = InferInsertModel<typeof bookTable>;
+// { title: string; publishedAt: Date }
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use .returning()" icon="arrow-rotate-left">
+    Always use `.returning()` on inserts/updates to get the result
+  </Card>
+  <Card title="Handle errors" icon="triangle-exclamation">
+    Use `isDbError()` to handle specific constraint violations
+  </Card>
+  <Card title="Use transactions" icon="layer-group">
+    Wrap related operations in transactions for consistency
+  </Card>
+  <Card title="Define utilities" icon="wrench">
+    Create reusable column definitions like `randomPrimaryUUID()`
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="tRPC Integration" icon="arrows-left-right" href="/backend/trpc-integration">
+    Use database in tRPC procedures
+  </Card>
+  <Card title="Creating Modules" icon="cube" href="/backend/modules">
+    Build modules with database access
+  </Card>
+  <Card title="Authentication" icon="shield" href="/backend/authentication">
+    See how Better Auth uses Drizzle
+  </Card>
+  <Card title="Overview" icon="book" href="/backend/overview">
+    Back to architecture overview
+  </Card>
+</CardGroup>

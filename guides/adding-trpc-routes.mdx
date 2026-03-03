@@ -1,0 +1,233 @@
+---
+title: Adding tRPC Routes
+description: Create type-safe tRPC procedures for your Sunny Stack application
+---
+
+This guide shows you how to add tRPC procedures to your modules, providing end-to-end type safety between your backend and frontend.
+
+## Understanding tRPC in Sunny Stack
+
+Sunny Stack uses tRPC for type-safe communication between the NestJS API and React frontend. Each module can have its own tRPC router.
+
+## Creating tRPC Procedures
+
+<Steps>
+
+<Step title="Create a router file">
+
+Create `apps/api/src/modules/tasks/trpc/tasks.router.ts`:
+
+```typescript
+import { z } from 'zod';
+import { taskTable, isDbError } from '@/core/database';
+import { throwAppError } from '@/trpc/error';
+import { protectedProcedure, publicProcedure, router } from '@/trpc/trpc';
+
+export const tasksRouter = router({
+  // Public endpoint - anyone can call
+  list: publicProcedure.query(async ({ ctx }) => {
+    return ctx.db.select().from(taskTable);
+  }),
+
+  // Protected endpoint - requires authentication
+  create: protectedProcedure
+    .input(z.object({ 
+      title: z.string().min(1), 
+      description: z.string().optional() 
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [newTask] = await ctx.db
+        .insert(taskTable)
+        .values({ 
+          title: input.title, 
+          description: input.description,
+          userId: ctx.user.id // Available in protectedProcedure
+        })
+        .returning();
+
+      return newTask;
+    }),
+
+  // Get by ID with validation
+  getById: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const task = await ctx.db
+        .select()
+        .from(taskTable)
+        .where(eq(taskTable.id, input.id))
+        .limit(1);
+
+      if (!task.length) {
+        throwAppError({
+          trpcCode: 'NOT_FOUND',
+          appCode: 'TASK_NOT_FOUND',
+          message: 'Task not found',
+        });
+      }
+
+      return task[0];
+    }),
+});
+```
+
+</Step>
+
+<Step title="Add router to app router">
+
+Register your router in `apps/api/src/trpc/app.router.ts`:
+
+```typescript
+import { booksRouter } from '@/modules/books/trpc/books.router';
+import { tasksRouter } from '@/modules/tasks/trpc/tasks.router';
+import { router } from './trpc';
+
+export const appRouter = router({
+  books: booksRouter,
+  tasks: tasksRouter, // Add this
+});
+
+export type AppRouter = typeof appRouter;
+```
+
+<Note>
+  The `AppRouter` type export is crucial - it's used by the frontend for full type safety.
+</Note>
+
+</Step>
+
+<Step title="Use from frontend">
+
+Now you can call your procedures from the React app with full type safety:
+
+```typescript
+import { trpc } from '@/lib/trpc';
+
+function TasksPage() {
+  // Query
+  const { data: tasks } = trpc.tasks.list.useQuery();
+
+  // Mutation
+  const createTask = trpc.tasks.create.useMutation();
+
+  const handleCreate = async () => {
+    await createTask.mutateAsync({
+      title: 'New Task',
+      description: 'Task description'
+    });
+  };
+
+  return (
+    <div>
+      {tasks?.map(task => (
+        <div key={task.id}>{task.title}</div>
+      ))}
+    </div>
+  );
+}
+```
+
+</Step>
+
+</Steps>
+
+## Procedure Types
+
+### Public Procedure
+
+Anyone can call these endpoints:
+
+```typescript
+publicProcedure.query(async ({ ctx }) => {
+  // ctx.user and ctx.session are optional
+  return ctx.db.select().from(table);
+});
+```
+
+### Protected Procedure
+
+Requires authentication (trpc.ts:33-44):
+
+```typescript
+protectedProcedure.query(async ({ ctx }) => {
+  // ctx.user and ctx.session are guaranteed to exist
+  return ctx.db.select().from(table).where(eq(table.userId, ctx.user.id));
+});
+```
+
+## Input Validation
+
+Use Zod for input validation (books.router.ts:18):
+
+```typescript
+protectedProcedure
+  .input(z.object({
+    title: z.string().min(1).max(100),
+    publishedAt: z.coerce.date(),
+    author: z.string().optional(),
+  }))
+  .mutation(async ({ ctx, input }) => {
+    // input is fully typed and validated
+  });
+```
+
+## Error Handling
+
+Handle database errors gracefully (books.router.ts:28-34):
+
+```typescript
+try {
+  const [result] = await ctx.db
+    .insert(table)
+    .values(input)
+    .returning();
+  return result;
+} catch (error) {
+  if (isDbError(error, 'UNIQUE_CONSTRAINT')) {
+    throwAppError({
+      trpcCode: 'BAD_REQUEST',
+      appCode: 'DUPLICATE_TITLE',
+      message: 'This title is already taken',
+      field: 'title',
+    });
+  }
+  throw error;
+}
+```
+
+## Real Example: Books Router
+
+The books router (books.router.ts:1-40) shows:
+
+- **Public query** (line 9): List books without auth
+- **Protected query** (line 14): List books with auth
+- **Protected mutation** (line 17): Create book with validation
+- **Error handling** (line 28): Handle unique constraint errors
+
+## Query vs Mutation
+
+- **Query**: For reading data (GET-like)
+- **Mutation**: For writing data (POST/PUT/DELETE-like)
+
+```typescript
+router({
+  // Use .query() for reads
+  list: publicProcedure.query(async ({ ctx }) => { /* ... */ }),
+  
+  // Use .mutation() for writes
+  create: protectedProcedure.mutation(async ({ ctx, input }) => { /* ... */ }),
+  update: protectedProcedure.mutation(async ({ ctx, input }) => { /* ... */ }),
+  delete: protectedProcedure.mutation(async ({ ctx, input }) => { /* ... */ }),
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Migrations" icon="database" href="/guides/database-migrations">
+    Create tables for your data
+  </Card>
+  <Card title="Authentication" icon="lock" href="/guides/authentication-setup">
+    Set up auth providers
+  </Card>
+</CardGroup>

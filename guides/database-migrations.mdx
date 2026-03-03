@@ -1,0 +1,283 @@
+---
+title: Database Migrations
+description: Working with Drizzle ORM migrations in Sunny Stack
+---
+
+This guide covers creating database schemas and running migrations using Drizzle ORM.
+
+## Database Setup
+
+Sunny Stack uses:
+- **Drizzle ORM** for type-safe database queries
+- **PostgreSQL** as the database
+- **Snake case** for database columns (drizzle.config.ts:7)
+
+## Creating a Schema
+
+<Steps>
+
+<Step title="Define your table schema">
+
+Create a new schema file in `apps/api/src/core/database/schema/`:
+
+```typescript
+// apps/api/src/core/database/schema/task.ts
+import { pgTable, text, boolean } from 'drizzle-orm/pg-core';
+import { createdAt, randomPrimaryUUID, updatedAt } from '../utils';
+
+export const taskTable = pgTable('task', {
+  id: randomPrimaryUUID(),
+  title: text().notNull(),
+  description: text(),
+  completed: boolean().default(false).notNull(),
+  userId: text().notNull(), // Foreign key to user
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+```
+
+<Note>
+  Use the helper functions from `utils.ts` for common patterns:
+  - `randomPrimaryUUID()`: Primary key with auto-generated UUID (utils.ts:3)
+  - `createdAt()`: Timestamp that defaults to now (utils.ts:5)
+  - `updatedAt()`: Timestamp that auto-updates (utils.ts:7)
+</Note>
+
+</Step>
+
+<Step title="Add unique constraints (optional)">
+
+Add constraints like the books example (book.ts:12):
+
+```typescript
+import { pgTable, text, unique } from 'drizzle-orm/pg-core';
+import { createdAt, randomPrimaryUUID } from '../utils';
+
+export const taskTable = pgTable(
+  'task',
+  {
+    id: randomPrimaryUUID(),
+    title: text().notNull(),
+    userId: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Ensure one user can't have duplicate task titles
+    unique().on(t.title, t.userId),
+  ],
+);
+```
+
+</Step>
+
+<Step title="Export from index">
+
+Add your table to `apps/api/src/core/database/schema/index.ts`:
+
+```typescript
+export * from './better-auth';
+export * from './book';
+export * from './task'; // Add this
+```
+
+</Step>
+
+<Step title="Generate migration">
+
+Run the migration generator (package.json scripts in apps/api/package.json:21):
+
+```bash
+cd apps/api
+pnpm db:generate
+```
+
+This creates a migration file in `apps/api/src/core/database/migrations/`.
+
+</Step>
+
+<Step title="Push to database">
+
+Apply the migration to your database:
+
+```bash
+pnpm db:push
+```
+
+<Warning>
+  Make sure your `DATABASE_URL` environment variable is set before running migrations.
+</Warning>
+
+</Step>
+
+</Steps>
+
+## Available Scripts
+
+From the `apps/api` directory (api/package.json:21-24):
+
+```bash
+# Generate migration files from schema changes
+pnpm db:generate
+
+# Apply migrations to database
+pnpm db:migrate
+
+# Push schema directly (development only)
+pnpm db:push
+
+# Open Drizzle Studio (GUI for your database)
+pnpm db:studio
+```
+
+## Schema Examples
+
+### Basic Table
+
+From the books example (book.ts:5-13):
+
+```typescript
+import { pgTable, text } from 'drizzle-orm/pg-core';
+import { createdAt, randomPrimaryUUID } from '../utils';
+
+export const bookTable = pgTable('book', {
+  id: randomPrimaryUUID(),
+  title: text().notNull(),
+  publishedAt: createdAt(),
+});
+```
+
+### Table with Relations
+
+```typescript
+import { pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
+import { randomPrimaryUUID, createdAt } from '../utils';
+
+export const commentTable = pgTable('comment', {
+  id: randomPrimaryUUID(),
+  content: text().notNull(),
+  taskId: text().notNull(),
+  userId: text().notNull(),
+  createdAt: createdAt(),
+});
+
+// Define relations
+export const commentRelations = relations(commentTable, ({ one }) => ({
+  task: one(taskTable, {
+    fields: [commentTable.taskId],
+    references: [taskTable.id],
+  }),
+}));
+```
+
+### Table with Enum
+
+```typescript
+import { pgTable, text, pgEnum } from 'drizzle-orm/pg-core';
+import { randomPrimaryUUID } from '../utils';
+
+export const statusEnum = pgEnum('task_status', ['todo', 'in_progress', 'done']);
+
+export const taskTable = pgTable('task', {
+  id: randomPrimaryUUID(),
+  title: text().notNull(),
+  status: statusEnum().default('todo').notNull(),
+});
+```
+
+## Using Tables in Your Code
+
+Import and use in services (books.service.ts:4):
+
+```typescript
+import { Inject, Injectable } from '@nestjs/common';
+import { eq } from 'drizzle-orm';
+import { type Database, DB_CONNECTION } from '@/core/database/database.constants';
+import { taskTable } from '@/core/database/schema';
+
+@Injectable()
+export class TasksService {
+  constructor(@Inject(DB_CONNECTION) private readonly db: Database) {}
+
+  getTasks() {
+    return this.db.select().from(taskTable);
+  }
+
+  getById(id: string) {
+    return this.db.select().from(taskTable).where(eq(taskTable.id, id));
+  }
+
+  create(data: { title: string; userId: string }) {
+    return this.db.insert(taskTable).values(data).returning();
+  }
+}
+```
+
+## Drizzle Configuration
+
+The config is in `apps/api/drizzle.config.ts`:
+
+```typescript
+import { defineConfig } from 'drizzle-kit';
+
+export default defineConfig({
+  schema: './src/core/database/schema',      // Where your schemas live
+  out: './src/core/database/migrations',    // Where migrations are generated
+  dialect: 'postgresql',
+  casing: 'snake_case',                     // Database uses snake_case
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+});
+```
+
+## Development Workflow
+
+<Steps>
+  <Step title="Modify schema">
+    Make changes to your schema files
+  </Step>
+  <Step title="Generate migration">
+    Run `pnpm db:generate` to create migration
+  </Step>
+  <Step title="Review migration">
+    Check the generated SQL in `migrations/` folder
+  </Step>
+  <Step title="Apply migration">
+    Run `pnpm db:push` to apply to database
+  </Step>
+  <Step title="Test">
+    Verify your changes work as expected
+  </Step>
+</Steps>
+
+## Local Database
+
+Start local PostgreSQL with Docker (docker-compose.yml:1-16):
+
+```bash
+docker-compose up -d
+```
+
+Default credentials:
+- **Host**: localhost
+- **Port**: 5432
+- **User**: user
+- **Password**: password
+- **Database**: postgres
+
+Connection string:
+```
+DATABASE_URL=postgresql://user:password@localhost:5432/postgres
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Modules" icon="cube" href="/guides/creating-modules">
+    Use your schema in a NestJS module
+  </Card>
+  <Card title="tRPC Routes" icon="route" href="/guides/adding-trpc-routes">
+    Expose your data via tRPC
+  </Card>
+</CardGroup>

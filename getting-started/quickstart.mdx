@@ -1,0 +1,250 @@
+---
+title: Quickstart
+description: Get your Sunny Stack applications running in minutes
+---
+
+This guide will walk you through starting both the API and dashboard applications and making your first API call.
+
+## Start the Development Servers
+
+<Steps>
+  <Step title="Start the Database">
+    If you haven't already, start the PostgreSQL database:
+    
+    ```bash
+    docker compose up -d
+    ```
+    
+    This runs PostgreSQL in the background. You can check logs with:
+    ```bash
+    docker compose logs -f postgres
+    ```
+  </Step>
+
+  <Step title="Run Database Migrations">
+    Ensure your database schema is up to date:
+    
+    ```bash
+    pnpm db:push
+    ```
+    
+    This command runs `drizzle-kit push` on the API application to sync your database schema.
+  </Step>
+
+  <Step title="Start All Applications">
+    Start both the API and dashboard in development mode:
+    
+    ```bash
+    pnpm dev
+    ```
+    
+    This runs `pnpm --recursive --parallel run dev`, which starts:
+    - **API**: NestJS server on `http://localhost:3001` (watch mode)
+    - **Dashboard**: Vite dev server on `http://localhost:3000`
+    
+    <Note>
+      Both applications will hot-reload when you make changes to the code.
+    </Note>
+  </Step>
+
+  <Step title="Verify Applications">
+    Open your browser and navigate to:
+    
+    - **Dashboard**: [http://localhost:3000](http://localhost:3000)
+    - **API Health Check**: [http://localhost:3001](http://localhost:3001)
+    
+    You should see both applications running successfully.
+  </Step>
+</Steps>
+
+## Alternative: Start Applications Individually
+
+You can also start each application separately for more control:
+
+<CodeGroup>
+  ```bash API Only
+  cd apps/api
+  pnpm dev
+  ```
+
+  ```bash Dashboard Only
+  cd apps/dashboard
+  pnpm dev
+  ```
+</CodeGroup>
+
+## Make Your First API Call
+
+Sunny Stack uses tRPC for type-safe API calls. Let's test the books router:
+
+<Steps>
+  <Step title="Understand the Books Router">
+    The API includes a sample books router at `apps/api/src/modules/books/trpc/books.router.ts` with these endpoints:
+    
+    - `books.listPublic` - Public endpoint (no auth required)
+    - `books.listProtected` - Protected endpoint (auth required)
+    - `books.create` - Create a new book (auth required)
+  </Step>
+
+  <Step title="Test the Public Endpoint">
+    You can test the public endpoint using the tRPC client in your dashboard.
+    
+    Open `apps/dashboard/src/` and you'll find the tRPC client configured to connect to your API.
+    
+    Here's an example of calling the books endpoint:
+    
+    ```typescript
+    import { trpc } from '@/api/trpc';
+    
+    // In a React component
+    function BooksList() {
+      const { data: books } = trpc.books.listPublic.useQuery();
+      
+      return (
+        <div>
+          <h1>Books</h1>
+          {books?.map(book => (
+            <div key={book.id}>
+              {book.title} - {book.publishedAt}
+            </div>
+          ))}
+        </div>
+      );
+    }
+    ```
+  </Step>
+
+  <Step title="Create a New Book">
+    To create a book, you'll need to be authenticated. The create endpoint expects:
+    
+    ```typescript
+    const { mutate: createBook } = trpc.books.create.useMutation();
+    
+    createBook({
+      title: "The Great Gatsby",
+      publishedAt: new Date("1925-04-10")
+    });
+    ```
+    
+    This will insert a new book into your PostgreSQL database using Drizzle ORM.
+  </Step>
+</Steps>
+
+## Using the API Directly
+
+While tRPC is the recommended way to call your API from the frontend, you can also make direct HTTP requests:
+
+<CodeGroup>
+  ```bash cURL
+  curl -X POST http://localhost:3001/trpc/books.listPublic \
+    -H "Content-Type: application/json" \
+    -d '{"json":null}'
+  ```
+
+  ```javascript Fetch
+  const response = await fetch('http://localhost:3001/trpc/books.listPublic', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ json: null })
+  });
+  
+  const data = await response.json();
+  console.log(data.result.data.json);
+  ```
+</CodeGroup>
+
+## Database Management
+
+While developing, you may need to manage your database:
+
+```bash
+# Open Drizzle Studio (database GUI)
+cd apps/api
+pnpm db:studio
+
+# Generate migrations
+pnpm db:generate
+
+# Run migrations
+pnpm db:migrate
+```
+
+<Tip>
+  Drizzle Studio provides a visual interface for browsing and editing your database at `https://local.drizzle.studio`
+</Tip>
+
+## Development Commands
+
+Here are some useful commands for development:
+
+```bash
+# Format all code
+pnpm format
+
+# Lint the codebase
+pnpm lint
+
+# Fix lint issues automatically
+pnpm lint:fix
+
+# Type check all packages
+pnpm typecheck
+
+# Run format, lint fix, and typecheck together
+pnpm fin
+
+# Build all packages for production
+pnpm build
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    If port 3000 or 3001 is already in use, you can either:
+    
+    1. Stop the process using that port
+    2. Change the port in your configuration:
+       - API: Update `PORT` in `apps/api/.env`
+       - Dashboard: Add `--port 3002` to the dev script in `apps/dashboard/package.json`
+  </Accordion>
+
+  <Accordion title="Database connection error">
+    Ensure PostgreSQL is running:
+    ```bash
+    docker compose ps
+    ```
+    
+    If it's not running, start it:
+    ```bash
+    docker compose up -d
+    ```
+    
+    Verify your `DATABASE_URL` in `apps/api/.env` matches the Docker configuration.
+  </Accordion>
+
+  <Accordion title="Type errors after installing dependencies">
+    Run a clean build and type check:
+    ```bash
+    pnpm build
+    pnpm typecheck
+    ```
+    
+    If issues persist, try removing and reinstalling dependencies:
+    ```bash
+    rm -rf node_modules
+    pnpm install
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+Now that your applications are running:
+
+- Learn about the [Project Structure](/getting-started/project-structure)
+- Explore [Authentication](/backend/authentication) with Better Auth
+- Build your first [tRPC Router](/guides/adding-trpc-routes)
+- Customize the [UI Components](/frontend/ui-components)

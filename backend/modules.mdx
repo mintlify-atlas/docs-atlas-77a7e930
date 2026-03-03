@@ -1,0 +1,496 @@
+---
+title: Creating NestJS Modules
+description: How to create feature modules in Sunny Stack with NestJS, tRPC, and database access
+---
+
+## Overview
+
+In Sunny Stack, a **module** is a self-contained feature with:
+- NestJS module, controller, and service (for REST endpoints)
+- tRPC router (for type-safe endpoints)
+- Database access via Drizzle ORM
+- Optional: Guards, decorators, DTOs
+
+## Module Structure
+
+Example: Books module
+
+```
+modules/books/
+├── books.module.ts        # NestJS module definition
+├── books.controller.ts    # REST endpoints (optional)
+├── books.service.ts       # Business logic
+└── trpc/
+    └── books.router.ts    # tRPC endpoints
+```
+
+## Step-by-Step: Creating a Module
+
+### 1. Create the NestJS Module
+
+```ts modules/books/books.module.ts
+import { Module } from '@nestjs/common';
+import { BooksController } from './books.controller';
+import { BooksService } from './books.service';
+
+@Module({
+  controllers: [BooksController],
+  providers: [BooksService],
+  exports: [],
+})
+export class BooksModule {}
+```
+
+### 2. Create the Service
+
+```ts modules/books/books.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { type Database, DB_CONNECTION } from '@/core/database/database.constants';
+import { bookTable } from '@/core/database/schema';
+
+@Injectable()
+export class BooksService {
+  constructor(@Inject(DB_CONNECTION) private readonly db: Database) {}
+
+  getBooks() {
+    return this.db.select().from(bookTable);
+  }
+}
+```
+
+### 3. Create the Controller (Optional)
+
+```ts modules/books/books.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { BooksService } from './books.service';
+
+@Controller('books')
+export class BooksController {
+  constructor(private readonly booksService: BooksService) {}
+
+  @Get()
+  getBooks() {
+    return this.booksService.getBooks();
+  }
+}
+```
+
+<Note>
+  Controllers are optional. You might only need a tRPC router and skip REST endpoints entirely.
+</Note>
+
+### 4. Create the tRPC Router
+
+```ts modules/books/trpc/books.router.ts
+import { z } from 'zod';
+import { bookTable, isDbError } from '@/core/database';
+import { throwAppError } from '@/trpc/error';
+import { protectedProcedure, publicProcedure, router } from '@/trpc/trpc';
+
+export const booksRouter = router({
+  // anyone can call this
+  listPublic: publicProcedure.query(async ({ ctx }) => {
+    return ctx.db.select().from(bookTable);
+  }),
+
+  // only logged-in users can call this
+  listProtected: protectedProcedure.query(async ({ ctx }) => {
+    return ctx.db.select().from(bookTable);
+  }),
+
+  create: protectedProcedure
+    .input(z.object({ title: z.string().min(1), publishedAt: z.coerce.date() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const [newBook] = await ctx.db
+          .insert(bookTable)
+          .values({ title: input.title, publishedAt: input.publishedAt })
+          .returning();
+
+        return newBook;
+      } catch (error) {
+        if (isDbError(error, 'UNIQUE_CONSTRAINT')) {
+          throwAppError({
+            trpcCode: 'BAD_REQUEST',
+            appCode: 'BOOK_TITLE_TAKEN',
+            message: 'Book title already taken',
+            field: 'title',
+          });
+        }
+        throw error;
+      }
+    }),
+});
+```
+
+### 5. Register the Router
+
+Add your router to the app router:
+
+```ts trpc/app.router.ts
+import { booksRouter } from '@/modules/books/trpc/books.router';
+import { router } from './trpc';
+
+export const appRouter = router({
+  books: booksRouter,
+  // Add more routers here
+});
+
+export type AppRouter = typeof appRouter;
+```
+
+### 6. Import the Module
+
+Add the module to `AppModule`:
+
+```ts app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { CoreModule } from './core/core.module';
+import { BooksModule } from './modules/books/books.module';
+import { TrpcModule } from './trpc/trpc.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    CoreModule,
+    TrpcModule,
+    BooksModule, // Add here
+  ],
+  controllers: [],
+  providers: [],
+})
+export class AppModule {}
+```
+
+## Common Patterns
+
+### Injecting Services in tRPC
+
+You might want to use NestJS services in tRPC routers. Since routers are not NestJS providers, you need to access services via context.
+
+<Tabs>
+  <Tab title="Option 1: Direct DB Access (Recommended)">
+    Access the database directly in tRPC procedures:
+
+    ```ts
+    export const booksRouter = router({
+      list: publicProcedure.query(async ({ ctx }) => {
+        return ctx.db.select().from(bookTable);
+      }),
+    });
+    ```
+  </Tab>
+  <Tab title="Option 2: Inject Service into Context">
+    Add the service to `TrpcContext`:
+
+    ```ts context.factory.ts
+    export type TrpcContext = {
+      db: Database;
+      session: Session | null;
+      user: User | null;
+      booksService: BooksService; // Add this
+    };
+
+    @Injectable()
+    export class TrpcContextFactory {
+      constructor(
+        @Inject(DB_CONNECTION) private readonly db: Database,
+        private readonly authSessions: AuthSessionService,
+        private readonly booksService: BooksService, // Inject
+      ) {}
+
+      async create(req: Request): Promise<TrpcContext> {
+        const sessionResult = await this.authSessions.getSession(req);
+
+        return {
+          db: this.db,
+          session: sessionResult?.session ?? null,
+          user: sessionResult?.user ?? null,
+          booksService: this.booksService, // Add to context
+        };
+      }
+    }
+    ```
+
+    Then use in router:
+
+    ```ts
+    export const booksRouter = router({
+      list: publicProcedure.query(async ({ ctx }) => {
+        return ctx.booksService.getBooks();
+      }),
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Option 2 requires importing `BooksModule` in `TrpcModule`. For most cases, direct database access (Option 1) is simpler.
+</Warning>
+
+### Using Auth in Procedures
+
+<CodeGroup>
+```ts Public (Optional Auth)
+publicProcedure.query(async ({ ctx }) => {
+  if (ctx.user) {
+    // User is logged in
+    return getPersonalizedBooks(ctx.user.id);
+  }
+  // User is not logged in
+  return getPublicBooks();
+});
+```
+
+```ts Protected (Required Auth)
+protectedProcedure.query(async ({ ctx }) => {
+  // ctx.user is guaranteed non-null
+  return ctx.db
+    .select()
+    .from(bookTable)
+    .where(eq(bookTable.userId, ctx.user.id));
+});
+```
+</CodeGroup>
+
+### Input Validation
+
+Always validate inputs with Zod:
+
+```ts
+const createBookInput = z.object({
+  title: z.string().min(1).max(200),
+  publishedAt: z.coerce.date(),
+  isbn: z.string().regex(/^\d{13}$/).optional(),
+});
+
+export const booksRouter = router({
+  create: protectedProcedure
+    .input(createBookInput)
+    .mutation(async ({ ctx, input }) => {
+      // input is typed as { title: string; publishedAt: Date; isbn?: string }
+      const [book] = await ctx.db.insert(bookTable).values(input).returning();
+      return book;
+    }),
+});
+```
+
+### Error Handling
+
+Use `throwAppError` for semantic errors:
+
+```ts
+import { isDbError } from '@/core/database';
+import { throwAppError } from '@/trpc/error';
+
+try {
+  const [book] = await ctx.db.insert(bookTable).values(input).returning();
+  return book;
+} catch (error) {
+  if (isDbError(error, 'UNIQUE_CONSTRAINT')) {
+    throwAppError({
+      trpcCode: 'BAD_REQUEST',
+      appCode: 'BOOK_TITLE_TAKEN',
+      message: 'Book title already taken',
+      field: 'title',
+    });
+  }
+  throw error;
+}
+```
+
+### Organizing Large Routers
+
+Split large routers into sub-routers:
+
+```ts
+// books.admin.router.ts
+export const booksAdminRouter = router({
+  delete: protectedProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.db.delete(bookTable).where(eq(bookTable.id, input.id));
+    }),
+});
+
+// books.public.router.ts
+export const booksPublicRouter = router({
+  list: publicProcedure.query(async ({ ctx }) => {
+    return ctx.db.select().from(bookTable);
+  }),
+});
+
+// books.router.ts
+export const booksRouter = router({
+  admin: booksAdminRouter,
+  public: booksPublicRouter,
+});
+```
+
+Client usage:
+
+```ts
+await trpc.books.admin.delete.mutate({ id: 'book-id' });
+await trpc.books.public.list.query();
+```
+
+## REST vs tRPC
+
+When to use each:
+
+<Tabs>
+  <Tab title="Use tRPC when">
+    - Building a fullstack TypeScript app
+    - You want end-to-end type safety
+    - Frontend and backend are in the same monorepo
+    - You need automatic client code generation
+  </Tab>
+  <Tab title="Use REST when">
+    - Building a public API for third parties
+    - Supporting non-TypeScript clients
+    - Need to follow OpenAPI/Swagger standards
+    - Webhooks or external integrations
+  </Tab>
+</Tabs>
+
+<Note>
+  You can have both! Use tRPC for your main app, and REST controllers for public APIs.
+</Note>
+
+## Module Dependency Injection
+
+If your module depends on another module's services:
+
+```ts
+import { Module } from '@nestjs/common';
+import { BooksModule } from '../books/books.module';
+import { AuthorsController } from './authors.controller';
+import { AuthorsService } from './authors.service';
+
+@Module({
+  imports: [BooksModule], // Import to access BooksService
+  controllers: [AuthorsController],
+  providers: [AuthorsService],
+})
+export class AuthorsModule {}
+```
+
+Then inject in your service:
+
+```ts
+import { Injectable } from '@nestjs/common';
+import { BooksService } from '../books/books.service';
+
+@Injectable()
+export class AuthorsService {
+  constructor(private readonly booksService: BooksService) {}
+
+  getAuthorBooks(authorId: string) {
+    return this.booksService.getBooksByAuthor(authorId);
+  }
+}
+```
+
+<Warning>
+  Make sure to export the service from `BooksModule`:
+
+  ```ts
+  @Module({
+    providers: [BooksService],
+    exports: [BooksService], // Add this
+  })
+  export class BooksModule {}
+  ```
+</Warning>
+
+## Testing Modules
+
+### Unit Testing Services
+
+```ts books.service.spec.ts
+import { Test } from '@nestjs/testing';
+import { BooksService } from './books.service';
+import { DB_CONNECTION } from '@/core/database/database.constants';
+
+const mockDb = {
+  select: jest.fn().mockReturnThis(),
+  from: jest.fn().mockReturnThis(),
+};
+
+describe('BooksService', () => {
+  let service: BooksService;
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        BooksService,
+        { provide: DB_CONNECTION, useValue: mockDb },
+      ],
+    }).compile();
+
+    service = module.get(BooksService);
+  });
+
+  it('should get books', async () => {
+    await service.getBooks();
+    expect(mockDb.select).toHaveBeenCalled();
+  });
+});
+```
+
+### Integration Testing tRPC
+
+```ts books.router.spec.ts
+import { createCallerFactory } from '@trpc/server';
+import { booksRouter } from './books.router';
+
+const createCaller = createCallerFactory();
+
+describe('BooksRouter', () => {
+  it('should list books', async () => {
+    const caller = createCaller(booksRouter)({
+      db: mockDb,
+      user: null,
+      session: null,
+    });
+
+    const books = await caller.listPublic();
+    expect(books).toBeDefined();
+  });
+});
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="One module per feature" icon="cube">
+    Keep modules focused on a single domain (books, users, etc.)
+  </Card>
+  <Card title="Use tRPC for internal APIs" icon="arrows-left-right">
+    Prefer tRPC routers over REST controllers for type safety
+  </Card>
+  <Card title="Validate all inputs" icon="shield-check">
+    Use Zod schemas to validate tRPC inputs
+  </Card>
+  <Card title="Export reusable services" icon="share-nodes">
+    Export services that other modules might need
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="tRPC Integration" icon="arrows-left-right" href="/backend/trpc-integration">
+    Deep dive into tRPC procedures and routers
+  </Card>
+  <Card title="Database" icon="database" href="/backend/database">
+    Learn Drizzle ORM for database operations
+  </Card>
+  <Card title="Authentication" icon="shield" href="/backend/authentication">
+    Add auth to your modules
+  </Card>
+  <Card title="Overview" icon="book" href="/backend/overview">
+    Back to architecture overview
+  </Card>
+</CardGroup>

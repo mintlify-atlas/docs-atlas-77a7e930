@@ -1,122 +1,97 @@
 {
   "$schema": "https://mintlify.com/docs.json",
+  "name": "Sunny Stack",
   "theme": "mint",
-  "name": "Mint Starter Kit",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#F59E0B",
+    "light": "#FCD34D",
+    "dark": "#D97706"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/sunnyysetia/sunny-stack"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/sunnyysetia/sunny-stack"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Overview",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "why-sunny-stack"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Getting Started",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "getting-started/installation",
+              "getting-started/quickstart",
+              "getting-started/project-structure"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Backend",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "backend/overview",
+              "backend/nestjs-setup",
+              "backend/trpc-integration",
+              "backend/database",
+              "backend/authentication",
+              "backend/modules"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Frontend",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "frontend/overview",
+              "frontend/tanstack-router",
+              "frontend/tanstack-query",
+              "frontend/trpc-client",
+              "frontend/authentication",
+              "frontend/ui-components"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/creating-modules",
+              "guides/adding-trpc-routes",
+              "guides/database-migrations",
+              "guides/authentication-setup",
+              "guides/deployment"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "tRPC Routers",
             "pages": [
-              "api-reference/introduction"
+              "api/trpc-setup",
+              "api/procedures",
+              "api/error-handling"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Database",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/schema",
+              "api/queries"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }
