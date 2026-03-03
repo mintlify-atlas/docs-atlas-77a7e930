@@ -79,11 +79,12 @@ Create a `.env` file in `apps/api/`:
 ```bash apps/api/.env
 DATABASE_URL="postgresql://user:password@localhost:5432/postgres"
 NODE_ENV="development"
-PORT=3001
+PORT=8000
 
 # Better Auth configuration
 BETTER_AUTH_SECRET="your-secret-key-here"
-BETTER_AUTH_URL="http://localhost:3001"
+SELF_BASE_URL="http://localhost:8000"
+BETTER_AUTH_BASE_PATH="/auth/client"
 ```
 
 <Note>
@@ -98,7 +99,7 @@ BETTER_AUTH_URL="http://localhost:3001"
 Create a `.env` file in `apps/dashboard/`:
 
 ```bash apps/dashboard/.env
-VITE_API_URL="http://localhost:3001"
+VITE_API_BASE_URL="http://localhost:8000"
 ```
 
 ## Database Setup

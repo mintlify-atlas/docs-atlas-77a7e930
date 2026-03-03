@@ -39,7 +39,7 @@ This guide will walk you through starting both the API and dashboard application
     ```
     
     This runs `pnpm --recursive --parallel run dev`, which starts:
-    - **API**: NestJS server on `http://localhost:3001` (watch mode)
+    - **API**: NestJS server on `http://localhost:8000` (watch mode)
     - **Dashboard**: Vite dev server on `http://localhost:3000`
     
     <Note>
@@ -51,7 +51,7 @@ This guide will walk you through starting both the API and dashboard application
     Open your browser and navigate to:
     
     - **Dashboard**: [http://localhost:3000](http://localhost:3000)
-    - **API Health Check**: [http://localhost:3001](http://localhost:3001)
+    - **API Health Check**: [http://localhost:8000](http://localhost:8000)
     
     You should see both applications running successfully.
   </Step>
@@ -136,13 +136,13 @@ While tRPC is the recommended way to call your API from the frontend, you can al
 
 <CodeGroup>
   ```bash cURL
-  curl -X POST http://localhost:3001/trpc/books.listPublic \
+  curl -X POST http://localhost:8000/trpc/books.listPublic \
     -H "Content-Type: application/json" \
     -d '{"json":null}'
   ```
 
   ```javascript Fetch
-  const response = await fetch('http://localhost:3001/trpc/books.listPublic', {
+  const response = await fetch('http://localhost:8000/trpc/books.listPublic', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -203,7 +203,7 @@ pnpm build
 
 <AccordionGroup>
   <Accordion title="Port already in use">
-    If port 3000 or 3001 is already in use, you can either:
+    If port 3000 or 8000 is already in use, you can either:
     
     1. Stop the process using that port
     2. Change the port in your configuration:
