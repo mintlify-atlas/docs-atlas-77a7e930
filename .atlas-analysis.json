@@ -1,0 +1,103 @@
+{
+  "projectType": "saas",
+  "projectName": "Sunny Stack",
+  "projectDescription": "A full-stack TypeScript SaaS starter with NestJS, tRPC, React, and end-to-end type safety",
+  "theme": "mint",
+  "primaryColor": "#F59E0B",
+  "lightColor": "#FCD34D",
+  "darkColor": "#D97706",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "introduction",
+              "why-sunny-stack"
+            ]
+          },
+          {
+            "group": "Getting Started",
+            "pages": [
+              "getting-started/installation",
+              "getting-started/quickstart",
+              "getting-started/project-structure"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "backend/overview",
+              "backend/nestjs-setup",
+              "backend/trpc-integration",
+              "backend/database",
+              "backend/authentication",
+              "backend/modules"
+            ]
+          },
+          {
+            "group": "Frontend",
+            "pages": [
+              "frontend/overview",
+              "frontend/tanstack-router",
+              "frontend/tanstack-query",
+              "frontend/trpc-client",
+              "frontend/authentication",
+              "frontend/ui-components"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/creating-modules",
+              "guides/adding-trpc-routes",
+              "guides/database-migrations",
+              "guides/authentication-setup",
+              "guides/deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "tRPC Routers",
+            "pages": [
+              "api/trpc-setup",
+              "api/procedures",
+              "api/error-handling"
+            ]
+          },
+          {
+            "group": "Database",
+            "pages": [
+              "api/schema",
+              "api/queries"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "End-to-end type safety with tRPC",
+    "NestJS modular backend architecture",
+    "React with Tanstack Router and Query",
+    "Better Auth authentication system",
+    "Drizzle ORM with PostgreSQL",
+    "Shadcn UI component library",
+    "Monorepo with pnpm workspaces"
+  ],
+  "publicApiSurface": [
+    "booksRouter.listPublic",
+    "booksRouter.listProtected",
+    "booksRouter.create",
+    "publicProcedure",
+    "protectedProcedure",
+    "AuthController",
+    "TrpcContextFactory"
+  ]
+}
